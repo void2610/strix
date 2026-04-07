@@ -88,7 +88,6 @@ struct PlayerView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .ignoresSafeArea(edges: .top)
         .task { await vm.load(videoID: videoID, modelContext: modelContext) }
         .onDisappear { vm.player?.pause() }
     }
