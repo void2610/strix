@@ -86,6 +86,10 @@ struct HomeView: View {
             }
         }
         .task { await vm.load() }
+        // ログイン・ログアウト時にパーソナライズされたフィードを再取得する
+        .onChange(of: AuthState.shared.isSignedIn) { _, _ in
+            Task { await vm.reload() }
+        }
     }
 
     // MARK: - サブセクション

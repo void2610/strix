@@ -29,6 +29,9 @@ extension ContentClient {
         let model = YouTubeModel()
         return ContentClient(
             fetchHome: {
+                // ログイン済みの場合はクッキーを注入してパーソナライズされたフィードを取得する
+                model.cookies = AuthState.shared.cookieString ?? ""
+
                 // ログインなしではホームフィードが空になるため、
                 // 動画が取れた場合はそれを使い、空の場合はトレンド検索にフォールバック
                 let (response, _) = await HomeScreenResponse.sendRequest(
@@ -47,6 +50,7 @@ extension ContentClient {
                 return (searchResponse?.results ?? []).compactMap { $0 as? YTVideo }
             },
             search: { query in
+                model.cookies = AuthState.shared.cookieString ?? ""
                 let (response, error) = await SearchResponse.sendRequest(
                     youtubeModel: model,
                     data: [.query: query]
@@ -55,6 +59,7 @@ extension ContentClient {
                 return (response?.results ?? []).compactMap { $0 as? YTVideo }
             },
             fetchRelated: { videoID in
+                model.cookies = AuthState.shared.cookieString ?? ""
                 let (response, error) = await MoreVideoInfosResponse.sendRequest(
                     youtubeModel: model,
                     data: [.query: videoID]

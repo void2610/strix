@@ -49,6 +49,10 @@ extension YouTubeClient {
             // クライアント識別ヘッダー（IOS = 5）
             request.setValue("5",        forHTTPHeaderField: "X-Youtube-Client-Name")
             request.setValue("21.13.6",  forHTTPHeaderField: "X-Youtube-Client-Version")
+            // ログイン済みの場合はクッキーを付与して認証済みストリームを取得する
+            if let cookies = AuthState.shared.cookieString {
+                request.setValue(cookies, forHTTPHeaderField: "Cookie")
+            }
 
             let body: [String: Any] = [
                 "videoId": videoID,

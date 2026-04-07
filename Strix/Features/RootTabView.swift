@@ -16,6 +16,9 @@ struct RootTabView: View {
             Tab("検索", systemImage: "magnifyingglass") {
                 SearchView()
             }
+            Tab("アカウント", systemImage: "person.crop.circle") {
+                AccountView()
+            }
         }
     }
 }
