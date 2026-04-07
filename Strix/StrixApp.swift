@@ -7,9 +7,16 @@
 
 import SwiftUI
 import SwiftData
+import AVFoundation
 
 @main
 struct StrixApp: App {
+    init() {
+        // 消音モードでも音声を再生する（音楽・動画アプリ標準の設定）
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+    }
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([WatchedVideo.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
