@@ -1,0 +1,24 @@
+{
+  "originHash" : "f392a2e9abaea7c5c2eeedb51003ad89e899964bb33433df0a4acb55f11c662d",
+  "pins" : [
+    {
+      "identity" : "nuke",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kean/Nuke",
+      "state" : {
+        "revision" : "83e19143355b02e9261edb2323b3e1e93287ebb9",
+        "version" : "12.9.0"
+      }
+    },
+    {
+      "identity" : "youtubekit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/b5i/YouTubeKit",
+      "state" : {
+        "revision" : "80e40ed92821244b53b33b59a60b6817e96dc754",
+        "version" : "1.3.0"
+      }
+    }
+  ],
+  "version" : 3
+}
