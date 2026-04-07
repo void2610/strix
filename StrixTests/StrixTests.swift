@@ -8,7 +8,6 @@
 import Testing
 import Foundation
 import SwiftData
-import YouTubeKit
 @testable import Strix
 
 // MARK: - YouTubeClient 結合テスト

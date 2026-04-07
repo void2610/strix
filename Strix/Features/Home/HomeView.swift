@@ -7,11 +7,10 @@
 
 import SwiftUI
 import SwiftData
-import YouTubeKit
 
 @Observable
 final class HomeViewModel {
-    var videos: [YTVideo] = []
+    var videos: [VideoItem] = []
     var isLoading = false
     var error: String?
 
@@ -152,7 +151,7 @@ struct HomeView: View {
 
     private var feedSection: some View {
         LazyVStack(spacing: 0) {
-            ForEach(vm.videos, id: \.videoId) { video in
+            ForEach(vm.videos) { video in
                 Button {
                     path.append(video.videoId)
                 } label: {

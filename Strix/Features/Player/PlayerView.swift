@@ -8,13 +8,12 @@
 import SwiftUI
 import AVKit
 import SwiftData
-import YouTubeKit
 
 @Observable
 final class PlayerViewModel {
     var player: AVPlayer?
     var videoInfo: VideoInfo?
-    var relatedVideos: [YTVideo] = []
+    var relatedVideos: [VideoItem] = []
     var isLoadingStream = true
     var isLoadingRelated = true
     var streamError: Error?
@@ -163,7 +162,7 @@ struct PlayerView: View {
                     .padding(.bottom, 8)
 
                 LazyVStack(spacing: 0) {
-                    ForEach(vm.relatedVideos, id: \.videoId) { video in
+                    ForEach(vm.relatedVideos) { video in
                         NavigationLink(value: video.videoId) {
                             VideoRowView(video: video)
                                 .padding(.horizontal, 12)

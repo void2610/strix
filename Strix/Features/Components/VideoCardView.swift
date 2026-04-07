@@ -7,11 +7,11 @@
 
 import SwiftUI
 import NukeUI
-import YouTubeKit
 
-/// YouTube 風の動画カード（サムネイル + チャンネルアイコン + メタ情報）
+/// YouTube 風の動画カード（サムネイル 16:9 + チャンネルアバター + メタ情報）
+/// ホームフィードで使用する。
 struct VideoCardView: View {
-    let video: YTVideo
+    let video: VideoItem
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,20 +22,19 @@ struct VideoCardView: View {
                 .background(Color(.secondarySystemBackground))
                 .clipped()
 
-            // メタ情報行
+            // メタ情報行（アバター + タイトル・チャンネル名・視聴回数）
             HStack(alignment: .top, spacing: 12) {
                 channelAvatar
                     .frame(width: 36, height: 36)
                     .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: 2) {
-                    if let title = video.title {
-                        Text(title)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .lineLimit(2)
-                            .foregroundStyle(.primary)
-                    }
+                    Text(video.title)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(2)
+                        .foregroundStyle(.primary)
+
                     metaText
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -50,7 +49,7 @@ struct VideoCardView: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let url = video.thumbnails.last?.url {
+        if let url = video.thumbnailURL {
             LazyImage(url: url) { state in
                 if let image = state.image {
                     image.resizable().scaledToFill()
@@ -75,7 +74,7 @@ struct VideoCardView: View {
 
     @ViewBuilder
     private var channelAvatar: some View {
-        if let url = video.channel?.thumbnails.last?.url {
+        if let url = video.channelAvatarURL {
             LazyImage(url: url) { state in
                 if let image = state.image {
                     image.resizable().scaledToFill()
@@ -99,24 +98,21 @@ struct VideoCardView: View {
     }
 
     private var metaText: some View {
-        let parts = [
-            video.channel?.name,
-            video.viewCount,
-            video.timePosted
-        ].compactMap { $0 }
+        let parts = [video.channelName, video.viewCountText, video.timePostedText]
+            .compactMap { $0 }
         return Text(parts.joined(separator: " • "))
     }
 }
 
 /// 検索結果・関連動画リスト向けのコンパクトな横並びビュー
 struct VideoRowView: View {
-    let video: YTVideo
+    let video: VideoItem
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // サムネイル
             Group {
-                if let url = video.thumbnails.last?.url {
+                if let url = video.thumbnailURL {
                     LazyImage(url: url) { state in
                         if let image = state.image {
                             image.resizable().scaledToFill()
@@ -134,13 +130,12 @@ struct VideoRowView: View {
 
             // メタ情報
             VStack(alignment: .leading, spacing: 4) {
-                if let title = video.title {
-                    Text(title)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                }
-                let meta = [video.channel?.name, video.viewCount, video.timePosted]
+                Text(video.title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(2)
+
+                let meta = [video.channelName, video.viewCountText, video.timePostedText]
                     .compactMap { $0 }.joined(separator: " • ")
                 Text(meta)
                     .font(.caption)

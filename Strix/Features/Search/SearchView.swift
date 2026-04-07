@@ -6,11 +6,10 @@
 //
 
 import SwiftUI
-import YouTubeKit
 
 @Observable
 final class SearchViewModel {
-    var results: [YTVideo] = []
+    var results: [VideoItem] = []
     var isLoading = false
     var error: String?
     var lastQuery = ""
@@ -89,7 +88,7 @@ struct SearchView: View {
     }
 
     private var resultsList: some View {
-        List(vm.results, id: \.videoId) { video in
+        List(vm.results) { video in
             Button {
                 path.append(video.videoId)
             } label: {
