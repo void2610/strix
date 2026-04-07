@@ -43,11 +43,11 @@ extension ContentClient {
                     // ログイン済み: SAPISIDHASH 付き Innertube /browse でパーソナライズドフィード取得
                     do {
                         let items = try await ContentClient.browseHome(cookies: c)
-                        print("[Strix] browseHome: \(items.count) 件取得")
+                        strixLog(" browseHome: \(items.count) 件取得")
                         if !items.isEmpty { return items }
-                        print("[Strix] browseHome: 空のため YouTubeKit にフォールバック")
+                        strixLog(" browseHome: 空のため YouTubeKit にフォールバック")
                     } catch {
-                        print("[Strix] browseHome エラー: \(error)")
+                        strixLog(" browseHome エラー: \(error)")
                     }
 
                     // ログイン済み YouTubeKit フォールバック
@@ -58,11 +58,11 @@ extension ContentClient {
                     let ytVideos = (response?.results ?? [])
                         .compactMap { $0 as? YTVideo }
                         .map { $0.toVideoItem }
-                    print("[Strix] YouTubeKit HomeScreen: \(ytVideos.count) 件取得")
+                    strixLog(" YouTubeKit HomeScreen: \(ytVideos.count) 件取得")
                     if !ytVideos.isEmpty { return ytVideos }
 
                     // ログイン済みで全部失敗 → trending で偽装しない（空を返す）
-                    print("[Strix] ログイン済みフィード取得失敗: 空を返す")
+                    strixLog(" ログイン済みフィード取得失敗: 空を返す")
                     return []
                 }
 
@@ -127,7 +127,7 @@ extension ContentClient {
             }
         }
         guard let sapisid else {
-            print("[Strix] SAPISID が見つかりません。クッキーキー: \(cookieString.components(separatedBy: "; ").map { $0.components(separatedBy: "=").first ?? "" }.joined(separator: ", "))")
+            strixLog(" SAPISID が見つかりません。クッキーキー: \(cookieString.components(separatedBy: "; ").map { $0.components(separatedBy: "=").first ?? "" }.joined(separator: ", "))")
             return nil
         }
         let origin = "https://www.youtube.com"
@@ -152,7 +152,7 @@ extension ContentClient {
         req.setValue(cookies,                    forHTTPHeaderField: "Cookie")
         if let hash = sapisidhash(from: cookies) {
             req.setValue(hash, forHTTPHeaderField: "Authorization")
-            print("[Strix] SAPISIDHASH 設定済み")
+            strixLog(" SAPISIDHASH 設定済み")
         }
 
         let body: [String: Any] = [
@@ -172,21 +172,21 @@ extension ContentClient {
 
         let (data, response) = try await URLSession.shared.data(for: req)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-        print("[Strix] browseHome HTTP \(statusCode), レスポンスサイズ: \(data.count) bytes")
+        strixLog(" browseHome HTTP \(statusCode), レスポンスサイズ: \(data.count) bytes")
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            print("[Strix] browseHome: JSON パース失敗")
+            strixLog(" browseHome: JSON パース失敗")
             return []
         }
 
         // エラーレスポンスチェック
         if let error = json["error"] as? [String: Any] {
-            print("[Strix] browseHome API エラー: \(error["message"] ?? error)")
+            strixLog(" browseHome API エラー: \(error["message"] ?? error)")
         }
 
         // レスポンス内の全 videoRenderer を再帰的に抽出する
         let videos = findVideoRenderers(in: json)
-        print("[Strix] browseHome: videoRenderer \(videos.count) 件発見")
+        strixLog(" browseHome: videoRenderer \(videos.count) 件発見")
         return videos.compactMap { parseVideoRenderer($0) }
     }
 

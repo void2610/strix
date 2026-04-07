@@ -10,6 +10,7 @@ import SwiftUI
 /// アカウントタブ。未ログイン時はログイン促進UI、ログイン済み時はアカウント情報を表示する。
 struct AccountView: View {
     @State private var showLogin = false
+    @State private var showLog = false
     private let authState = AuthState.shared
 
     var body: some View {
@@ -49,6 +50,17 @@ struct AccountView: View {
                     Label("ログアウト", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             }
+
+            Section("デバッグ") {
+                Button {
+                    showLog = true
+                } label: {
+                    Label("デバッグログ", systemImage: "doc.text.magnifyingglass")
+                }
+            }
+        }
+        .sheet(isPresented: $showLog) {
+            LogView()
         }
         .navigationTitle("アカウント")
         .navigationBarTitleDisplayMode(.large)
@@ -88,8 +100,20 @@ struct AccountView: View {
         }
         .navigationTitle("アカウント")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showLog = true
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                }
+            }
+        }
         .sheet(isPresented: $showLogin) {
             LoginView {}
+        }
+        .sheet(isPresented: $showLog) {
+            LogView()
         }
     }
 }
