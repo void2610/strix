@@ -11,6 +11,7 @@
 | [tech-stack.md](./tech-stack.md) | 技術スタック・アーキテクチャ |
 | [deployment.md](./deployment.md) | ビルド・デプロイ方針 |
 | [features.md](./features.md) | 機能一覧 |
+| [implementation-basic.md](./implementation-basic.md) | 基本機能の実装計画・UI デザイン |
 
 ## 決定事項まとめ
 
