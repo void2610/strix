@@ -11,13 +11,10 @@ import SwiftData
 @main
 struct StrixApp: App {
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            WatchedVideo.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
+        let schema = Schema([WatchedVideo.self])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(for: schema, configurations: [config])
         } catch {
             fatalError("ModelContainer の作成に失敗しました: \(error)")
         }
@@ -25,7 +22,7 @@ struct StrixApp: App {
 
     var body: some Scene {
         WindowGroup {
-            HomeView()
+            RootTabView()
         }
         .modelContainer(sharedModelContainer)
     }
