@@ -16,6 +16,15 @@ struct ContentClient {
 }
 
 extension ContentClient {
+    /// テスト用モッククライアント。各クロージャを差し替えて挙動を制御できる。
+    static func mock(
+        fetchHome: @escaping () async throws -> [YTVideo] = { [] },
+        search: @escaping (String) async throws -> [YTVideo] = { _ in [] },
+        fetchRelated: @escaping (String) async throws -> [YTVideo] = { _ in [] }
+    ) -> ContentClient {
+        ContentClient(fetchHome: fetchHome, search: search, fetchRelated: fetchRelated)
+    }
+
     static let live: ContentClient = {
         let model = YouTubeModel()
         return ContentClient(

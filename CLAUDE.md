@@ -62,6 +62,18 @@ xcodebuild test -project Strix.xcodeproj -scheme Strix \
   2>&1 | grep -E "passed|failed|error:"
 ```
 
+## テスト方針
+
+- **機能実装が完了したら必ずテストを実行すること。**
+- 新しい ViewModel・ロジック・ユーティリティを追加したら、対応するテストを同時に実装すること。
+- テストの分類：
+  - **ユニットテスト**: ViewModel / ユーティリティ関数 → `ContentClient.mock()` / `YouTubeClient` のモックを使い、ネットワーク不要で検証する
+  - **結合テスト**: API クライアント (`YouTubeClientTests`, `ContentClientTests`) → 実際のネットワークを叩いて疎通確認する
+  - **SwiftData テスト**: `ModelConfiguration(isStoredInMemoryOnly: true)` でインメモリ DB を使う
+- ViewModel への依存注入（DI）パターン：
+  - `init(client: ContentClient = .live)` / `init(youtubeClient:contentClient:)` のように本番はデフォルト引数で `.live` を使う
+  - テスト時は `ContentClient.mock(search: { ... })` で差し替える
+
 ## ディレクトリ構成
 
 ```

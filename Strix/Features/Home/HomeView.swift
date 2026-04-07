@@ -15,12 +15,18 @@ final class HomeViewModel {
     var isLoading = false
     var error: String?
 
+    private let client: ContentClient
+
+    init(client: ContentClient = .live) {
+        self.client = client
+    }
+
     func load() async {
         guard videos.isEmpty else { return }
         isLoading = true
         error = nil
         do {
-            videos = try await ContentClient.live.fetchHome()
+            videos = try await client.fetchHome()
         } catch {
             self.error = error.localizedDescription
         }

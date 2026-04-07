@@ -15,6 +15,12 @@ final class SearchViewModel {
     var error: String?
     var lastQuery = ""
 
+    private let client: ContentClient
+
+    init(client: ContentClient = .live) {
+        self.client = client
+    }
+
     func search(_ query: String) async {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty, q != lastQuery else { return }
@@ -23,7 +29,7 @@ final class SearchViewModel {
         error = nil
         results = []
         do {
-            results = try await ContentClient.live.search(q)
+            results = try await client.search(q)
         } catch {
             self.error = error.localizedDescription
         }

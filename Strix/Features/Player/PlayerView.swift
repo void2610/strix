@@ -19,6 +19,14 @@ final class PlayerViewModel {
     var isLoadingRelated = true
     var streamError: Error?
 
+    private let youtubeClient: YouTubeClient
+    private let contentClient: ContentClient
+
+    init(youtubeClient: YouTubeClient = .live, contentClient: ContentClient = .live) {
+        self.youtubeClient = youtubeClient
+        self.contentClient = contentClient
+    }
+
     func load(videoID: String, modelContext: ModelContext) async {
         // ストリームと関連動画を並列取得
         async let streamTask: Void = loadStream(videoID: videoID, modelContext: modelContext)
@@ -28,7 +36,7 @@ final class PlayerViewModel {
 
     private func loadStream(videoID: String, modelContext: ModelContext) async {
         do {
-            let info = try await YouTubeClient.live.fetchVideo(videoID)
+            let info = try await youtubeClient.fetchVideo(videoID)
             videoInfo = info
             player = AVPlayer(url: info.streamURL)
             player?.play()
@@ -42,7 +50,7 @@ final class PlayerViewModel {
 
     private func loadRelated(videoID: String) async {
         do {
-            relatedVideos = try await ContentClient.live.fetchRelated(videoID)
+            relatedVideos = try await contentClient.fetchRelated(videoID)
         } catch {
             // 関連動画の失敗はサイレントに扱う
         }
