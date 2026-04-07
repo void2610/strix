@@ -24,6 +24,38 @@ xcodebuild -resolvePackageDependencies -project Strix.xcodeproj
 xcodebuild -project Strix.xcodeproj -scheme Strix -showdestinations
 ```
 
+## 実機ビルド＆インストール（iPhone 16）
+
+```bash
+# デバイス一覧確認
+xcrun devicectl list devices --columns udid
+
+# 実機向けビルド（USB or Tailscale 接続時）
+xcodebuild -project Strix.xcodeproj -scheme Strix \
+  -destination "platform=iOS,id=00008140-001C61C436A2801C" \
+  -configuration Debug \
+  -allowProvisioningUpdates \
+  build 2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED|CodeSign"
+
+# インストール
+xcrun devicectl device install app \
+  --device 9C6866FC-D294-573E-BB8B-4106CC0E01F6 \
+  $(find ~/Library/Developer/Xcode/DerivedData/Strix-*/Build/Products/Debug-iphoneos -name "Strix.app" -maxdepth 1 | head -1)
+
+# ビルド＆インストール一括
+xcodebuild -project Strix.xcodeproj -scheme Strix \
+  -destination "platform=iOS,id=00008140-001C61C436A2801C" \
+  -configuration Debug -allowProvisioningUpdates build && \
+xcrun devicectl device install app \
+  --device 9C6866FC-D294-573E-BB8B-4106CC0E01F6 \
+  $(find ~/Library/Developer/Xcode/DerivedData/Strix-*/Build/Products/Debug-iphoneos -name "Strix.app" -maxdepth 1 | head -1)
+```
+
+**デバイス情報（iPhone 16）**
+- UDID: `00008140-001C61C436A2801C`
+- CoreDevice ID: `9C6866FC-D294-573E-BB8B-4106CC0E01F6`
+- 開発チーム: `8MDSKG4HM9`（Personal Team）
+
 ## テスト実行
 
 ```bash
