@@ -27,7 +27,7 @@ func extractVideoID(from input: String) -> String? {
 
     // https://youtu.be/XXXXXXXXXXX
     if url.host == "youtu.be" {
-        return url.pathComponents.dropFirst().first.map(String.init)
+        return url.pathComponents.dropFirst().first
     }
 
     // https://www.youtube.com/shorts/XXXXXXXXXXX

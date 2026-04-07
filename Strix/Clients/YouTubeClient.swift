@@ -40,20 +40,20 @@ extension YouTubeClient {
 
             // 動画情報を Innertube API から取得
             let (videoInfos, error) = await VideoInfosResponse.sendRequest(
-                youTubeModel: youtubeModel,
+                youtubeModel: youtubeModel,
                 data: [.query: videoID]
             )
 
             if let error { throw error }
             guard let videoInfos else { throw YouTubeClientError.streamNotFound }
 
-            // 音声付き動画ストリームの中から最高画質を選択
+            // HLS ストリーム URL を取得
             guard let streamURL = videoInfos.streamingURL else {
                 throw YouTubeClientError.streamNotFound
             }
 
-            let title = videoInfos.channel?.name ?? videoID
-            let thumbnailURL = videoInfos.thumbnails?.first?.url?.absoluteString ?? ""
+            let title = videoInfos.title ?? videoID
+            let thumbnailURL = videoInfos.thumbnails.first?.url.absoluteString ?? ""
 
             return VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL)
         }
