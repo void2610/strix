@@ -8,11 +8,7 @@ Swift 6 + SwiftUI + YouTubeKit（Innertube API）で構築。
 ## ビルドコマンド
 
 ```bash
-# シミュレータ向けビルド（通常の開発時）
-xcodebuild -project Strix.xcodeproj -scheme Strix \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
-
-# ビルド（エラーのみ表示）
+# シミュレータ向けビルド（エラーのみ表示）
 xcodebuild -project Strix.xcodeproj -scheme Strix \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build \
   2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED"
@@ -59,9 +55,11 @@ xcrun devicectl device install app \
 ## テスト実行
 
 ```bash
-# ユニットテスト
-xcodebuild test -project Strix.xcodeproj -scheme StrixTests \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+# ユニットテスト（StrixTests のみ）
+xcodebuild test -project Strix.xcodeproj -scheme Strix \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing:StrixTests \
+  2>&1 | grep -E "passed|failed|error:"
 ```
 
 ## ディレクトリ構成
@@ -70,19 +68,25 @@ xcodebuild test -project Strix.xcodeproj -scheme StrixTests \
 strix/
 ├── Strix.xcodeproj
 ├── Strix/
-│   ├── StrixApp.swift          # エントリポイント・ModelContainer 設定
+│   ├── StrixApp.swift               # エントリポイント・ModelContainer 設定
 │   ├── Assets.xcassets/
 │   ├── Models/
-│   │   └── WatchedVideo.swift  # SwiftData モデル（視聴履歴）
+│   │   └── WatchedVideo.swift       # SwiftData モデル（視聴履歴）
 │   ├── Features/
+│   │   ├── RootTabView.swift        # タブ構成（ホーム・検索）
 │   │   ├── Home/
-│   │   │   └── HomeView.swift  # URL/ID 入力・視聴履歴表示
-│   │   └── Player/
-│   │       └── PlayerView.swift # AVPlayer 動画再生
+│   │   │   └── HomeView.swift       # ホームフィード + URL入力 + 履歴
+│   │   ├── Search/
+│   │   │   └── SearchView.swift     # 動画検索
+│   │   ├── Player/
+│   │   │   └── PlayerView.swift     # AVPlayer 再生 + 関連動画
+│   │   └── Components/
+│   │       └── VideoCardView.swift  # 共通カード・行ビュー
 │   ├── Clients/
-│   │   └── YouTubeClient.swift # YouTubeKit（Innertube API）ラッパー
+│   │   ├── YouTubeClient.swift      # ストリーム URL 取得（Innertube IOS client）
+│   │   └── ContentClient.swift      # ホーム/検索/関連動画（YouTubeKit）
 │   └── Utilities/
-│       └── VideoID.swift       # URL・動画 ID パーサー
+│       └── VideoID.swift            # URL・動画 ID パーサー
 ├── StrixTests/
 └── StrixUITests/
 ```
@@ -91,12 +95,16 @@ strix/
 
 | ライブラリ | バージョン | 用途 |
 |---|---|---|
-| YouTubeKit | 1.3.0 | Innertube API でストリーム URL 取得 |
+| YouTubeKit | 1.3.0 | ホーム/検索/関連動画フェッチ |
 | Nuke / NukeUI | 12.9.0 | サムネイル画像キャッシュ |
 
 ## 注意事項
 
 - ターゲット: iOS 26.2+（Xcode 26.3 で作成）
 - Swift 6 strict concurrency 有効（`@MainActor` デフォルト）
-- YouTubeKit の `sendRequest` は `youtubeModel:` （小文字 t）
-- `VideoInfosResponse.streamingURL` は HLS manifest URL
+- **ストリーム取得**: YouTubeKit は使わず Innertube API を IOS クライアント (v21.13.6) で直接叩く
+  - `clientName: "IOS"`, `X-Youtube-Client-Name: 5` が必須
+  - iOS クライアントは通常動画でも `hlsManifestUrl`（M3U8）を返す
+- **ホーム/検索/関連**: YouTubeKit の `HomeScreenResponse` / `SearchResponse` / `MoreVideoInfosResponse` を使用
+  - ログインなしでは HomeScreenResponse が空 → SearchResponse にフォールバック
+- `VideoInfosResponse.streamingURL` は HLS manifest URL（ライブ配信専用ではなく IOS クライアントなら通常動画でも取得可）
