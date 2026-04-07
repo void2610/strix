@@ -10,7 +10,7 @@ import CryptoKit
 import YouTubeKit
 
 /// ホームフィード・検索・関連動画を取得するクライアント。
-/// 戻り値は YouTubeKit の YTVideo に依存しない VideoItem に統一している。
+/// 戻り値は VideoItem に統一している。
 struct ContentClient {
     var fetchHome: () async throws -> [VideoItem]
     var search: (String) async throws -> [VideoItem]
@@ -20,7 +20,6 @@ struct ContentClient {
 // MARK: - モック（テスト用）
 
 extension ContentClient {
-    /// テスト時に各クロージャを差し替えて挙動を制御できるモッククライアント
     static func mock(
         fetchHome: @escaping () async throws -> [VideoItem] = { [] },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
@@ -38,27 +37,46 @@ extension ContentClient {
         return ContentClient(
             fetchHome: {
                 let cookies = AuthState.shared.cookieString
+                let isSignedIn = cookies != nil && !cookies!.isEmpty
 
-                // ログイン済みの場合は Innertube WEB Browse API でパーソナライズドフィードを取得する。
-                // SAPISIDHASH 署名を付与することで認証済みレスポンスを得られる。
-                if let c = cookies, !c.isEmpty {
-                    if let items = try? await ContentClient.browseHome(cookies: c), !items.isEmpty {
-                        return items
+                if isSignedIn, let c = cookies {
+                    // ログイン済み: SAPISIDHASH 付き Innertube /browse でパーソナライズドフィード取得
+                    do {
+                        let items = try await ContentClient.browseHome(cookies: c)
+                        print("[Strix] browseHome: \(items.count) 件取得")
+                        if !items.isEmpty { return items }
+                        print("[Strix] browseHome: 空のため YouTubeKit にフォールバック")
+                    } catch {
+                        print("[Strix] browseHome エラー: \(error)")
                     }
+
+                    // ログイン済み YouTubeKit フォールバック
+                    model.cookies = c
+                    let (response, _) = await HomeScreenResponse.sendRequest(
+                        youtubeModel: model, data: [:]
+                    )
+                    let ytVideos = (response?.results ?? [])
+                        .compactMap { $0 as? YTVideo }
+                        .map { $0.toVideoItem }
+                    print("[Strix] YouTubeKit HomeScreen: \(ytVideos.count) 件取得")
+                    if !ytVideos.isEmpty { return ytVideos }
+
+                    // ログイン済みで全部失敗 → trending で偽装しない（空を返す）
+                    print("[Strix] ログイン済みフィード取得失敗: 空を返す")
+                    return []
                 }
 
-                // 未ログイン、または Browse API が空を返した場合は YouTubeKit にフォールバック
-                model.cookies = cookies ?? ""
+                // 未ログイン: YouTubeKit → trending フォールバック
+                model.cookies = ""
                 let (response, _) = await HomeScreenResponse.sendRequest(
-                    youtubeModel: model,
-                    data: [:]
+                    youtubeModel: model, data: [:]
                 )
                 let homeVideos = (response?.results ?? [])
                     .compactMap { $0 as? YTVideo }
                     .map { $0.toVideoItem }
                 if !homeVideos.isEmpty { return homeVideos }
 
-                // 最終フォールバック: トレンド検索で代替
+                // 未ログイン最終フォールバック: トレンド検索
                 let (searchResponse, searchError) = await SearchResponse.sendRequest(
                     youtubeModel: model,
                     data: [.query: "trending music 2025"]
@@ -98,10 +116,8 @@ extension ContentClient {
 
 extension ContentClient {
 
-    /// SAPISIDHASH 署名ヘッダーを計算する。
-    /// 算出式: SAPISIDHASH {timestamp}_{SHA1("{timestamp} {SAPISID} {origin}")}
+    /// SAPISIDHASH 署名ヘッダーを計算する
     private static func sapisidhash(from cookieString: String) -> String? {
-        // SAPISID / __Secure-3PAPISID のいずれかを取り出す
         let pairs = cookieString.components(separatedBy: "; ")
         var sapisid: String?
         for name in ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"] {
@@ -110,8 +126,10 @@ extension ContentClient {
                 break
             }
         }
-        guard let sapisid else { return nil }
-
+        guard let sapisid else {
+            print("[Strix] SAPISID が見つかりません。クッキーキー: \(cookieString.components(separatedBy: "; ").map { $0.components(separatedBy: "=").first ?? "" }.joined(separator: ", "))")
+            return nil
+        }
         let origin = "https://www.youtube.com"
         let ts = Int(Date().timeIntervalSince1970)
         let payload = "\(ts) \(sapisid) \(origin)"
@@ -121,20 +139,20 @@ extension ContentClient {
         return "SAPISIDHASH \(ts)_\(hash)"
     }
 
-    /// Innertube WEB クライアントで /browse を叩いてホームフィードを取得する。
-    /// Cookie + Authorization（SAPISIDHASH）ヘッダーにより認証済みレスポンスを受け取る。
+    /// Innertube WEB /browse でホームフィードを取得する
     private static func browseHome(cookies: String) async throws -> [VideoItem] {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("application/json",             forHTTPHeaderField: "Content-Type")
-        req.setValue("1",                            forHTTPHeaderField: "X-Youtube-Client-Name")
-        req.setValue("2.20240101.09.00",             forHTTPHeaderField: "X-Youtube-Client-Version")
-        req.setValue("https://www.youtube.com",      forHTTPHeaderField: "X-Origin")
-        req.setValue("https://www.youtube.com/",     forHTTPHeaderField: "Referer")
-        req.setValue(cookies,                        forHTTPHeaderField: "Cookie")
+        req.setValue("application/json",         forHTTPHeaderField: "Content-Type")
+        req.setValue("1",                        forHTTPHeaderField: "X-Youtube-Client-Name")
+        req.setValue("2.20240101.09.00",         forHTTPHeaderField: "X-Youtube-Client-Version")
+        req.setValue("https://www.youtube.com",  forHTTPHeaderField: "X-Origin")
+        req.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        req.setValue(cookies,                    forHTTPHeaderField: "Cookie")
         if let hash = sapisidhash(from: cookies) {
             req.setValue(hash, forHTTPHeaderField: "Authorization")
+            print("[Strix] SAPISIDHASH 設定済み")
         }
 
         let body: [String: Any] = [
@@ -152,36 +170,37 @@ extension ContentClient {
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.shared.data(for: req)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[Strix] browseHome HTTP \(statusCode), レスポンスサイズ: \(data.count) bytes")
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("[Strix] browseHome: JSON パース失敗")
             return []
         }
-        return parseBrowseVideos(from: json)
+
+        // エラーレスポンスチェック
+        if let error = json["error"] as? [String: Any] {
+            print("[Strix] browseHome API エラー: \(error["message"] ?? error)")
+        }
+
+        // レスポンス内の全 videoRenderer を再帰的に抽出する
+        let videos = findVideoRenderers(in: json)
+        print("[Strix] browseHome: videoRenderer \(videos.count) 件発見")
+        return videos.compactMap { parseVideoRenderer($0) }
     }
 
-    /// browse レスポンスの JSON から VideoItem 配列を抽出する。
-    /// パス: contents.twoColumnBrowseResultsRenderer.tabs[0]
-    ///       .tabRenderer.content.richGridRenderer.contents[].richItemRenderer.content.videoRenderer
-    private static func parseBrowseVideos(from json: [String: Any]) -> [VideoItem] {
-        guard
-            let contents  = json["contents"] as? [String: Any],
-            let twoCol    = contents["twoColumnBrowseResultsRenderer"] as? [String: Any],
-            let tabs      = twoCol["tabs"] as? [[String: Any]],
-            let firstTab  = tabs.first,
-            let tabRdr    = firstTab["tabRenderer"] as? [String: Any],
-            let content   = tabRdr["content"] as? [String: Any],
-            let richGrid  = content["richGridRenderer"] as? [String: Any],
-            let items     = richGrid["contents"] as? [[String: Any]]
-        else { return [] }
-
-        return items.compactMap { item -> VideoItem? in
-            guard
-                let richItem = item["richItemRenderer"] as? [String: Any],
-                let content  = richItem["content"] as? [String: Any],
-                let vr       = content["videoRenderer"] as? [String: Any]
-            else { return nil }
-            return parseVideoRenderer(vr)
+    /// JSON ツリーを再帰的に探索して videoRenderer を全て抽出する
+    private static func findVideoRenderers(in json: Any) -> [[String: Any]] {
+        if let dict = json as? [String: Any] {
+            if let vr = dict["videoRenderer"] as? [String: Any] {
+                return [vr]
+            }
+            return dict.values.flatMap { findVideoRenderers(in: $0) }
+        } else if let array = json as? [Any] {
+            return array.flatMap { findVideoRenderers(in: $0) }
         }
+        return []
     }
 
     /// videoRenderer オブジェクト一件から VideoItem を生成する
@@ -192,25 +211,23 @@ extension ContentClient {
         let title = ((vr["title"] as? [String: Any])?["runs"] as? [[String: Any]])?
             .first?["text"] as? String ?? videoId
 
-        // サムネイル: 最後（最高解像度）を使う
+        // サムネイル
         let thumbs = (vr["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
         let thumbURL = (thumbs?.last?["url"] as? String).flatMap { URL(string: $0) }
 
-        // チャンネル名: ownerText.runs[0].text
+        // チャンネル名
         let channelName = ((vr["ownerText"] as? [String: Any])?["runs"] as? [[String: Any]])?
             .first?["text"] as? String
 
-        // チャンネルアバター（ネストが深いため段階的に取り出す）
+        // チャンネルアバター
         let chThumb = vr["channelThumbnailSupportedRenderers"] as? [String: Any]
         let chThumbLink = chThumb?["channelThumbnailWithLinkRenderer"] as? [String: Any]
         let chThumbObj = chThumbLink?["thumbnail"] as? [String: Any]
         let chThumbs = chThumbObj?["thumbnails"] as? [[String: Any]]
         let avatarURL = (chThumbs?.last?["url"] as? String).flatMap { URL(string: $0) }
 
-        // 視聴回数: shortViewCountText.simpleText
+        // 視聴回数・投稿日時
         let viewCount = (vr["shortViewCountText"] as? [String: Any])?["simpleText"] as? String
-
-        // 投稿日時: publishedTimeText.simpleText
         let timePosted = (vr["publishedTimeText"] as? [String: Any])?["simpleText"] as? String
 
         return VideoItem(

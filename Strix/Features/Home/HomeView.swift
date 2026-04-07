@@ -84,10 +84,10 @@ struct HomeView: View {
                 PlayerView(videoID: videoID)
             }
         }
-        .task { await vm.load() }
-        // ログイン・ログアウト時にパーソナライズされたフィードを再取得する
-        .onChange(of: AuthState.shared.isSignedIn) { _, _ in
-            Task { await vm.reload() }
+        // isSignedIn が変化するたびに（ログイン・ログアウト・初回表示）フィードを再取得する
+        // onChange より task(id:) の方が @Observable シングルトンの変化を確実に拾える
+        .task(id: AuthState.shared.isSignedIn) {
+            await vm.reload()
         }
     }
 
