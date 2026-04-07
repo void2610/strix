@@ -67,7 +67,8 @@ struct HomeView: View {
                         )
                         .padding(.top, 40)
                     } else {
-                        feedSection
+                        sectionHeader("おすすめ")
+                    feedSection
                     }
                 }
             }
@@ -152,6 +153,14 @@ struct HomeView: View {
                 Divider()
             }
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .padding(.horizontal)
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - アクション

@@ -124,9 +124,8 @@ struct PlayerView: View {
                 .font(.headline)
                 .lineLimit(3)
 
-            Text(info.thumbnailURL.isEmpty ? "" : "")  // チャンネル名は関連APIから取得
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            // チャンネル名は関連動画取得後に vm.relatedVideos の先頭から参照
+            // それまでは空表示
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

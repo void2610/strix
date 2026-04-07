@@ -20,12 +20,22 @@ extension ContentClient {
         let model = YouTubeModel()
         return ContentClient(
             fetchHome: {
-                let (response, error) = await HomeScreenResponse.sendRequest(
+                // ログインなしではホームフィードが空になるため、
+                // 動画が取れた場合はそれを使い、空の場合はトレンド検索にフォールバック
+                let (response, _) = await HomeScreenResponse.sendRequest(
                     youtubeModel: model,
                     data: [:]
                 )
-                if let error { throw error }
-                return (response?.results ?? []).compactMap { $0 as? YTVideo }
+                let homeVideos = (response?.results ?? []).compactMap { $0 as? YTVideo }
+                if !homeVideos.isEmpty { return homeVideos }
+
+                // フォールバック: 人気動画を検索で代替
+                let (searchResponse, searchError) = await SearchResponse.sendRequest(
+                    youtubeModel: model,
+                    data: [.query: "trending music 2025"]
+                )
+                if let searchError { throw searchError }
+                return (searchResponse?.results ?? []).compactMap { $0 as? YTVideo }
             },
             search: { query in
                 let (response, error) = await SearchResponse.sendRequest(
