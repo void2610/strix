@@ -37,9 +37,23 @@ final class PlayerViewModel {
         do {
             let info = try await youtubeClient.fetchVideo(videoID)
             videoInfo = info
-            player = AVPlayer(url: info.streamURL)
-            player?.play()
+            let avPlayer = AVPlayer(url: info.streamURL)
+            player = avPlayer
+            avPlayer.play()
             isLoadingStream = false
+            // コントロールセンター・ロック画面の Now Playing を開始する
+            NowPlayingManager.shared.start(
+                player: avPlayer,
+                title: info.title,
+                thumbnailURL: info.thumbnailURL
+            )
+            // ダイナミックアイランド Live Activity を開始する
+            LiveActivityManager.shared.start(
+                title: info.title,
+                channelName: "",
+                thumbnailURL: info.thumbnailURL,
+                player: avPlayer
+            )
             saveToHistory(videoID: videoID, info: info, modelContext: modelContext)
         } catch {
             streamError = error
@@ -96,7 +110,11 @@ struct PlayerView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .task { await vm.load(videoID: videoID, modelContext: modelContext) }
-        .onDisappear { vm.player?.pause() }
+        .onDisappear {
+            vm.player?.pause()
+            NowPlayingManager.shared.stop()
+            LiveActivityManager.shared.stop()
+        }
     }
 
     // MARK: - プレイヤー
