@@ -6,7 +6,9 @@
 //
 
 import SwiftUI
+import AVFoundation
 import AVKit
+import UIKit
 import SwiftData
 
 @Observable
@@ -102,6 +104,24 @@ struct PlayerView: View {
                 // 動画プレイヤー（画面幅 × 16:9）
                 playerSection
 
+                // 倍速ボタン（プレイヤー直下・右寄せ）
+                if !vm.isLoadingStream && vm.streamError == nil {
+                    HStack {
+                        Spacer()
+                        Button {
+                            vm.togglePlaybackRate()
+                        } label: {
+                            Text(vm.playbackRate == 1.0 ? "1×" : "2×")
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(.thinMaterial, in: Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
+
                 if vm.isLoadingStream {
                     // ローディング中はタイトルスケルトン
                     skeletonTitle
@@ -147,27 +167,7 @@ struct PlayerView: View {
                 )
                 .colorScheme(.dark)
             } else if let player = vm.player {
-                VideoPlayer(player: player)
-
-                // カスタムオーバーレイボタン群（右上）
-                VStack {
-                    HStack {
-                        Spacer()
-                        playerOverlayButtons
-                    }
-                    Spacer()
-                }
-                .padding(.top, 8)
-                .padding(.trailing, 8)
-            }
-        }
-    }
-
-    /// プレイヤー上に重ねるカスタムボタン群
-    private var playerOverlayButtons: some View {
-        HStack(spacing: 8) {
-            SpeedToggleButton(rate: vm.playbackRate) {
-                vm.togglePlaybackRate()
+                AVPlayerLayerView(player: player)
             }
         }
     }
@@ -233,20 +233,64 @@ struct PlayerView: View {
     }
 }
 
-// MARK: - 速度切り替えボタン
+// MARK: - AVPlayer バックグラウンド対応ビュー
 
-private struct SpeedToggleButton: View {
-    let rate: Float
-    let action: () -> Void
+/// `AVPlayerViewController` をラップしつつ、バックグラウンド移行時に
+/// `player` プロパティを一時的に `nil` にすることで iOS の自動停止を回避する。
+/// 標準の再生コントロール（シークバー・再生/停止ボタン等）はそのまま使える。
+private struct AVPlayerLayerView: UIViewControllerRepresentable {
+    let player: AVPlayer
 
-    var body: some View {
-        Button(action: action) {
-            Text(rate == 1.0 ? "1×" : "2×")
-                .font(.caption.bold())
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.black.opacity(0.6), in: Capsule())
-        }
+    func makeUIViewController(context: Context) -> _PlayerViewController {
+        _PlayerViewController(player: player)
+    }
+
+    func updateUIViewController(_ vc: _PlayerViewController, context: Context) {}
+}
+
+/// `AVPlayerViewController` のサブクラス。
+/// `willResignActive` で `player = nil` にしてバックグラウンド自動停止を無効化し、
+/// `willEnterForeground` で `player` を復元する。
+final class _PlayerViewController: AVPlayerViewController {
+    private let playerRef: AVPlayer
+
+    init(player: AVPlayer) {
+        self.playerRef = player
+        super.init(nibName: nil, bundle: nil)
+        self.player = player
+        // NowPlayingManager が MPNowPlayingInfoCenter を管理するため、
+        // AVPlayerViewController の自動更新を無効化する
+        self.updatesNowPlayingInfoCenter = false
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(willResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(willEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    /// バックグラウンド移行直前: ViewController とプレイヤーの接続を切り離して iOS の自動停止を無効化する
+    @objc private func willResignActive() {
+        player = nil
+    }
+
+    /// フォアグラウンド復帰直前: ViewController にプレイヤーを再接続して映像表示を再開する
+    @objc private func willEnterForeground() {
+        player = playerRef
     }
 }
+

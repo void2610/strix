@@ -102,6 +102,7 @@ strix/
 ├── Strix.xcodeproj
 ├── Strix/
 │   ├── StrixApp.swift               # エントリポイント・ModelContainer 設定
+│   ├── Info.plist                   # 手動管理 Info.plist（UIBackgroundModes=audio 含む）
 │   ├── Assets.xcassets/
 │   ├── Models/
 │   │   └── WatchedVideo.swift       # SwiftData モデル（視聴履歴）
@@ -112,7 +113,7 @@ strix/
 │   │   ├── Search/
 │   │   │   └── SearchView.swift     # 動画検索
 │   │   ├── Player/
-│   │   │   └── PlayerView.swift     # AVPlayer 再生 + 関連動画
+│   │   │   └── PlayerView.swift     # AVPlayerViewController 再生 + 関連動画
 │   │   └── Components/
 │   │       └── VideoCardView.swift  # 共通カード・行ビュー
 │   ├── Clients/
@@ -141,3 +142,32 @@ strix/
 - **ホーム/検索/関連**: YouTubeKit の `HomeScreenResponse` / `SearchResponse` / `MoreVideoInfosResponse` を使用
   - ログインなしでは HomeScreenResponse が空 → SearchResponse にフォールバック
 - `VideoInfosResponse.streamingURL` は HLS manifest URL（ライブ配信専用ではなく IOS クライアントなら通常動画でも取得可）
+
+## バックグラウンド再生の実装
+
+### Info.plist の管理方針
+
+`INFOPLIST_KEY_UIBackgroundModes[sdk=iphoneos*]` はビルド設定では配列型キーを正しく生成できないため、
+`Strix/Info.plist` を手動管理している。
+
+- `project.pbxproj`: `GENERATE_INFOPLIST_FILE = NO` + `INFOPLIST_FILE = Strix/Info.plist`
+- `PBXFileSystemSynchronizedBuildFileExceptionSet` で `Info.plist` を Copy Bundle Resources から除外
+- `Info.plist` には `UIBackgroundModes = [audio]` と `NSSupportsLiveActivities = true` を明示
+
+### AVPlayerViewController でのバックグラウンド対応
+
+iOS は `AVPlayerLayer` に接続された `AVPlayer` をバックグラウンド移行時に自動停止する。
+`_PlayerViewController`（`AVPlayerViewController` のサブクラス）で以下を実装して回避する：
+
+```swift
+@objc private func willResignActive() {
+    player = nil        // VC とプレイヤーの接続を切り離す → iOS の自動停止が発動しない
+}
+@objc private func willEnterForeground() {
+    player = playerRef  // 復帰時に再接続して映像表示を再開
+}
+```
+
+- `VideoPlayer`（AVKit）は使わない: フォアグラウンド復帰時に内部で `pause()` を呼ぶため
+- `AVPlayerViewController.updatesNowPlayingInfoCenter = false` を設定し、`NowPlayingManager` との競合を防ぐ
+- 倍速ボタンはプレイヤー直下の SwiftUI レイアウトに配置（`customOverlayViewController` は tvOS 専用）
