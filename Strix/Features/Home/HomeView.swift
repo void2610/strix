@@ -7,40 +7,65 @@
 
 import SwiftUI
 import SwiftData
+import YouTubeKit
+import NukeUI
+
+// MARK: - ViewModel
 
 @Observable
 final class HomeViewModel {
     var videos: [VideoItem] = []
+    var quickPlaylists: [YTPlaylist] = []
     var isLoading = false
     var error: String?
 
     private let client: ContentClient
+    private let accountClient: AccountClient
 
-    init(client: ContentClient = .live) {
+    init(client: ContentClient = .live, accountClient: AccountClient = .live) {
         self.client = client
+        self.accountClient = accountClient
     }
 
     func load() async {
         guard videos.isEmpty else { return }
         isLoading = true
         error = nil
-        do {
-            videos = try await client.fetchHome()
-        } catch {
-            self.error = error.localizedDescription
-        }
+        async let feedTask: Void = loadFeed()
+        async let playlistTask: Void = loadQuickPlaylists()
+        _ = await (feedTask, playlistTask)
         isLoading = false
     }
 
     func reload() async {
         videos = []
+        quickPlaylists = []
         await load()
+    }
+
+    private func loadFeed() async {
+        do {
+            videos = try await client.fetchHome()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func loadQuickPlaylists() async {
+        guard AuthState.shared.isSignedIn else { return }
+        guard let library = try? await accountClient.fetchLibrary() else { return }
+        var items: [YTPlaylist] = []
+        if let wl = library.watchLater { items.append(wl) }
+        if let likes = library.likes { items.append(likes) }
+        items.append(contentsOf: library.playlists)
+        quickPlaylists = items
     }
 }
 
+// MARK: - View
+
 struct HomeView: View {
     @State private var vm = HomeViewModel()
-    @State private var urlInput = ""
     @State private var path = NavigationPath()
     @Query(sort: \WatchedVideo.watchedAt, order: .reverse) private var history: [WatchedVideo]
 
@@ -48,8 +73,10 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    // URL 入力セクション
-                    urlInputSection
+                    // プレイリストクイックアクセス（ログイン済みかつデータあり）
+                    if !vm.quickPlaylists.isEmpty {
+                        playlistQuickAccessSection
+                    }
 
                     // 視聴履歴（ある場合）
                     if !history.isEmpty {
@@ -73,7 +100,7 @@ struct HomeView: View {
                         .padding(.top, 40)
                     } else {
                         sectionHeader("おすすめ")
-                    feedSection
+                        feedSection
                     }
                 }
             }
@@ -84,55 +111,41 @@ struct HomeView: View {
                 PlayerView(videoID: videoID)
             }
         }
-        // isSignedIn が変化するたびに（ログイン・ログアウト・初回表示）フィードを再取得する
-        // onChange より task(id:) の方が @Observable シングルトンの変化を確実に拾える
         .task(id: AuthState.shared.isSignedIn) {
             await vm.reload()
         }
     }
 
-    // MARK: - サブセクション
+    // MARK: - プレイリストクイックアクセス
 
-    private var urlInputSection: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Image(systemName: "link")
-                    .foregroundStyle(.secondary)
-                TextField("YouTube URL または動画 ID", text: $urlInput)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .submitLabel(.go)
-                    .onSubmit(playFromInput)
-                if !urlInput.isEmpty {
-                    Button {
-                        urlInput = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+    private var playlistQuickAccessSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("プレイリスト")
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 16) {
+                    ForEach(vm.quickPlaylists, id: \.playlistId) { playlist in
+                        NavigationLink {
+                            PlaylistDetailView(playlist: playlist)
+                        } label: {
+                            PlaylistCircleItem(playlist: playlist)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
             }
-            .padding(10)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-            .padding(.horizontal)
-
-            Button(action: playFromInput) {
-                Label("再生", systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(extractVideoID(from: urlInput) == nil)
-            .padding(.horizontal)
         }
         .padding(.top, 12)
         .padding(.bottom, 8)
     }
 
+    // MARK: - 視聴履歴
+
     private var historySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("最近再生した動画")
-                .font(.headline)
-                .padding(.horizontal)
+            sectionHeader("最近再生した動画")
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
@@ -143,11 +156,13 @@ struct HomeView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal)
+                .padding(.horizontal, 16)
             }
         }
         .padding(.bottom, 8)
     }
+
+    // MARK: - フィード
 
     private var feedSection: some View {
         LazyVStack(spacing: 0) {
@@ -167,18 +182,70 @@ struct HomeView: View {
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
             .font(.headline)
-            .padding(.horizontal)
+            .padding(.horizontal, 16)
             .padding(.top, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    // MARK: - アクション
+// MARK: - プレイリストクイックアクセスアイテム
 
-    private func playFromInput() {
-        if let id = extractVideoID(from: urlInput) {
-            path.append(id)
-            urlInput = ""
+private struct PlaylistCircleItem: View {
+    let playlist: YTPlaylist
+
+    /// プレイリスト ID に対応するシステムアイコン
+    private var systemIcon: String? {
+        switch playlist.playlistId {
+        case "VLWL": return "bookmark.fill"
+        case "VLLL": return "hand.thumbsup.fill"
+        default:     return nil
         }
+    }
+
+    private var thumbnailURL: URL? {
+        playlist.thumbnails.last?.url
+            ?? playlist.frontVideos.first?.thumbnails.last?.url
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                // サムネイル or システムアイコン
+                if let url = thumbnailURL {
+                    LazyImage(url: url) { state in
+                        if let image = state.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            circlePlaceholder
+                        }
+                    }
+                } else {
+                    circlePlaceholder
+                }
+
+                // 後で見る・いいねはアイコンオーバーレイ
+                if let icon = systemIcon {
+                    Circle()
+                        .fill(.black.opacity(0.4))
+                    Image(systemName: icon)
+                        .font(.title2)
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: 64, height: 64)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(Color(.separator), lineWidth: 0.5))
+
+            Text(playlist.title ?? "プレイリスト")
+                .font(.caption)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(width: 72)
+        }
+    }
+
+    private var circlePlaceholder: some View {
+        Circle().fill(Color(.secondarySystemBackground))
     }
 }
 
