@@ -17,6 +17,8 @@ final class PlayerViewModel {
     var isLoadingStream = true
     var isLoadingRelated = true
     var streamError: Error?
+    /// 現在の再生速度（1.0 または 2.0）
+    var playbackRate: Float = 1.0
 
     private let youtubeClient: YouTubeClient
     private let contentClient: ContentClient
@@ -68,6 +70,12 @@ final class PlayerViewModel {
             // 関連動画の失敗はサイレントに扱う
         }
         isLoadingRelated = false
+    }
+
+    /// 再生速度を 1.0 → 2.0 → 1.0 の順に切り替える
+    func togglePlaybackRate() {
+        playbackRate = (playbackRate == 1.0) ? 2.0 : 1.0
+        player?.rate = playbackRate
     }
 
     private func saveToHistory(videoID: String, info: VideoInfo, modelContext: ModelContext) {
@@ -136,6 +144,26 @@ struct PlayerView: View {
                 .colorScheme(.dark)
             } else if let player = vm.player {
                 VideoPlayer(player: player)
+
+                // カスタムオーバーレイボタン群（右上）
+                VStack {
+                    HStack {
+                        Spacer()
+                        playerOverlayButtons
+                    }
+                    Spacer()
+                }
+                .padding(.top, 8)
+                .padding(.trailing, 8)
+            }
+        }
+    }
+
+    /// プレイヤー上に重ねるカスタムボタン群
+    private var playerOverlayButtons: some View {
+        HStack(spacing: 8) {
+            SpeedToggleButton(rate: vm.playbackRate) {
+                vm.togglePlaybackRate()
             }
         }
     }
@@ -197,6 +225,24 @@ struct PlayerView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 20)
             }
+        }
+    }
+}
+
+// MARK: - 速度切り替えボタン
+
+private struct SpeedToggleButton: View {
+    let rate: Float
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(rate == 1.0 ? "1×" : "2×")
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.black.opacity(0.6), in: Capsule())
         }
     }
 }
