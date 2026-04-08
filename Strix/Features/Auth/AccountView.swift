@@ -70,6 +70,9 @@ struct AccountView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("アカウント")
         .navigationBarTitleDisplayMode(.large)
+        .navigationDestination(for: String.self) { videoID in
+            PlayerView(videoID: videoID)
+        }
         .sheet(isPresented: $showLog) { LogView() }
         .task { await vm.load() }
     }
