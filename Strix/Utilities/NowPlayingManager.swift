@@ -157,6 +157,13 @@ final class NowPlayingManager {
                 var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = CMTimeGetSeconds(player.currentTime())
                 info[MPNowPlayingInfoPropertyPlaybackRate] = player.rate
+                // HLS は再生開始直後に duration が不明なため、取得できたタイミングで設定する
+                // duration が未設定だとロック画面のシークバーが非アクティブになる
+                if info[MPMediaItemPropertyPlaybackDuration] == nil,
+                   let duration = player.currentItem?.duration,
+                   duration.isNumeric {
+                    info[MPMediaItemPropertyPlaybackDuration] = CMTimeGetSeconds(duration)
+                }
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = info
             }
         }
