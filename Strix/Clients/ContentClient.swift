@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import CryptoKit
+import WebKit
 import YouTubeKit
 
 /// ホームフィード・検索・関連動画を取得するクライアント。
@@ -112,122 +112,89 @@ extension ContentClient {
     }()
 }
 
-// MARK: - Innertube WEB Browse API（パーソナライズドホームフィード）
+// MARK: - WKWebView ベースのホームフィード取得
 
 extension ContentClient {
 
-    /// SAPISIDHASH 署名ヘッダーを計算する
-    private static func sapisidhash(from cookieString: String) -> String? {
-        let pairs = cookieString.components(separatedBy: "; ")
-        var sapisid: String?
-        for name in ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"] {
-            if let pair = pairs.first(where: { $0.hasPrefix("\(name)=") }) {
-                sapisid = String(pair.dropFirst("\(name)=".count))
-                break
-            }
-        }
-        guard let sapisid else {
-            strixLog(" SAPISID が見つかりません。クッキーキー: \(cookieString.components(separatedBy: "; ").map { $0.components(separatedBy: "=").first ?? "" }.joined(separator: ", "))")
-            return nil
-        }
-        let origin = "https://www.youtube.com"
-        let ts = Int(Date().timeIntervalSince1970)
-        let payload = "\(ts) \(sapisid) \(origin)"
-        let hash = Insecure.SHA1.hash(data: Data(payload.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return "SAPISIDHASH \(ts)_\(hash)"
-    }
-
-    /// Innertube IOS クライアントで /browse を叩いてホームフィードを取得する。
-    /// WEB クライアントは SAPISIDHASH が効かず空フィードになるため、
-    /// プレイヤーと同じ IOS クライアントを使用する。
+    /// WKWebView を使って YouTube ホームフィードを取得する。
+    /// ログイン時の WKWebsiteDataStore を再利用するため Cookie 認証が確実に機能する。
+    /// アプリ再起動後（dataStore が nil）はクッキーを新しい dataStore に注入してフォールバックする。
     private static func browseHome(cookies: String) async throws -> [VideoItem] {
-        // クッキーキー一覧をログ（値は出さない）
         let cookieKeys = cookies.components(separatedBy: "; ")
             .compactMap { $0.components(separatedBy: "=").first }
         strixLog(" クッキーキー(\(cookieKeys.count)): \(cookieKeys.joined(separator: ", "))")
 
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // プレイヤーエンドポイントと同じ IOS クライアントヘッダーを使う
-        req.setValue(
-            "com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 26_4 like Mac OS X;)",
-            forHTTPHeaderField: "User-Agent"
-        )
-        req.setValue("5",       forHTTPHeaderField: "X-Youtube-Client-Name")
-        req.setValue("21.13.6", forHTTPHeaderField: "X-Youtube-Client-Version")
-        req.setValue(cookies,   forHTTPHeaderField: "Cookie")
+        // ログイン時の dataStore を優先使用（同一セッション）、なければ Cookie 注入版を作成
+        let dataStore: WKWebsiteDataStore
+        if let saved = await MainActor.run(body: { AuthState.shared.dataStore }) {
+            strixLog(" browseHome: 保存済み dataStore を使用")
+            dataStore = saved
+        } else {
+            strixLog(" browseHome: dataStore なし → Cookie 注入版を作成")
+            dataStore = await Self.makeDataStore(from: cookies)
+        }
 
-        let body: [String: Any] = [
-            "browseId": "FEwhat_to_watch",
-            "context": [
-                "client": [
-                    "clientName": "IOS",
-                    "clientVersion": "21.13.6",
-                    "deviceMake": "Apple",
-                    "deviceModel": "iPhone16,2",
-                    "osName": "iPhone",
-                    "osVersion": "26.4.23E246",
-                    "hl": "ja",
-                    "gl": "JP"
-                ]
-            ]
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: req)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-        strixLog(" browseHome HTTP \(statusCode), レスポンスサイズ: \(data.count) bytes")
-
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            strixLog(" browseHome: JSON パース失敗")
+        guard let json = await YouTubeWebLoader.load(dataStore: dataStore) else {
+            strixLog(" browseHome: ytInitialData 取得失敗")
             return []
         }
 
-        // エラーレスポンスチェック
-        if let error = json["error"] as? [String: Any] {
-            strixLog(" browseHome API エラー: \(error["message"] ?? error)")
-        }
-
-        // 構造診断: トップレベルキーと実際に存在する Renderer 種類をログ出力する
-        strixLog(" browseHome トップレベルキー: \(json.keys.sorted().joined(separator: ", "))")
-        let rendererTypes = findAllRendererKeys(in: json)
-        strixLog(" browseHome Renderer 種類(\(rendererTypes.count)): \(rendererTypes.sorted().prefix(30).joined(separator: ", "))")
-
-        // alerts があれば表示（ログイン要求など）
-        if let alerts = json["alerts"] as? [[String: Any]] {
-            strixLog(" browseHome alerts: \(alerts.first ?? [:])")
-        }
-
-        // レスポンス内の全 videoRenderer を再帰的に抽出する
+        let vrCount = countKeys("videoRenderer", in: json)
+        strixLog(" browseHome: videoRenderer \(vrCount) 件")
         let videos = findVideoRenderers(in: json)
-        strixLog(" browseHome: videoRenderer \(videos.count) 件発見")
-        return videos.compactMap { parseVideoRenderer($0) }
+        let parsed = videos.compactMap { parseVideoRenderer($0) }
+        strixLog(" browseHome: パース成功 \(parsed.count) 件 / 抽出 \(videos.count) 件")
+        return parsed
     }
 
-    /// JSON ツリーを再帰的に探索して "Renderer" で終わるキーを全て収集する（構造診断用）
-    private static func findAllRendererKeys(in json: Any) -> Set<String> {
-        var result = Set<String>()
-        if let dict = json as? [String: Any] {
-            for key in dict.keys where key.hasSuffix("Renderer") {
-                result.insert(key)
-            }
-            for value in dict.values {
-                result.formUnion(findAllRendererKeys(in: value))
-            }
-        } else if let array = json as? [Any] {
-            for element in array {
-                result.formUnion(findAllRendererKeys(in: element))
+    /// クッキー文字列から WKWebsiteDataStore を作成してクッキーを注入する（アプリ再起動時フォールバック用）
+    @MainActor
+    private static func makeDataStore(from cookieString: String) async -> WKWebsiteDataStore {
+        let store = WKWebsiteDataStore.nonPersistent()
+        let pairs = cookieString.components(separatedBy: "; ")
+
+        for pair in pairs {
+            let eqIdx = pair.firstIndex(of: "=") ?? pair.endIndex
+            let name  = String(pair[pair.startIndex..<eqIdx])
+            let value = eqIdx < pair.endIndex
+                ? String(pair[pair.index(after: eqIdx)...])
+                : ""
+            guard !name.isEmpty else { continue }
+
+            // __Host- プレフィックスはドメインなし・secure 必須
+            let isHostPrefixed = name.hasPrefix("__Host-")
+            let isSecure       = isHostPrefixed || name.hasPrefix("__Secure-")
+            let domain         = isHostPrefixed ? "youtube.com" : ".youtube.com"
+
+            var props: [HTTPCookiePropertyKey: Any] = [
+                .name:   name,
+                .value:  value,
+                .domain: domain,
+                .path:   "/",
+            ]
+            if isSecure { props[.secure] = "TRUE" }
+
+            if let cookie = HTTPCookie(properties: props) {
+                await store.httpCookieStore.setCookie(cookie)
             }
         }
-        return result
+        return store
+    }
+
+    /// JSON ツリーを再帰的に探索して特定キーの出現回数を返す（件数診断用）
+    private static func countKeys(_ key: String, in json: Any) -> Int {
+        if let dict = json as? [String: Any] {
+            let found = dict[key] != nil ? 1 : 0
+            return found + dict.values.reduce(0) { $0 + countKeys(key, in: $1) }
+        } else if let array = json as? [Any] {
+            return array.reduce(0) { $0 + countKeys(key, in: $1) }
+        }
+        return 0
     }
 
     /// JSON ツリーを再帰的に探索して動画 Renderer を全て抽出する。
-    /// WEB → videoRenderer / IOS → compactVideoRenderer の両方を対象にする。
+    /// WEB → videoRenderer / IOS 旧形式 → compactVideoRenderer
+    /// IOS 新形式 → elementRenderer 内の videoWithContextModel
     private static func findVideoRenderers(in json: Any) -> [[String: Any]] {
         if let dict = json as? [String: Any] {
             if let vr = dict["videoRenderer"] as? [String: Any] {
@@ -236,6 +203,11 @@ extension ContentClient {
             if let vr = dict["compactVideoRenderer"] as? [String: Any] {
                 return [vr]
             }
+            // IOS 新形式: elementRenderer.newElement.type.componentType.model.videoWithContextModel
+            if let el = dict["elementRenderer"] as? [String: Any],
+               let item = extractVideoWithContextModel(from: el) {
+                return [item]
+            }
             return dict.values.flatMap { findVideoRenderers(in: $0) }
         } else if let array = json as? [Any] {
             return array.flatMap { findVideoRenderers(in: $0) }
@@ -243,8 +215,28 @@ extension ContentClient {
         return []
     }
 
-    /// videoRenderer / compactVideoRenderer オブジェクト一件から VideoItem を生成する
+    /// elementRenderer から videoWithContextModel を取り出す。
+    /// パス: newElement.type.componentType.model.videoWithContextModel
+    private static func extractVideoWithContextModel(from el: [String: Any]) -> [String: Any]? {
+        guard
+            let newElement   = el["newElement"]  as? [String: Any],
+            let type_        = newElement["type"] as? [String: Any],
+            let component    = type_["componentType"] as? [String: Any],
+            let model        = component["model"]     as? [String: Any],
+            let vcm          = model["videoWithContextModel"] as? [String: Any]
+        else { return nil }
+        return vcm
+    }
+
+    /// videoRenderer / compactVideoRenderer / videoWithContextModel 一件から VideoItem を生成する。
+    /// videoWithContextModel は videoWithContextData キーを持つ新 IOS 形式。
     private static func parseVideoRenderer(_ vr: [String: Any]) -> VideoItem? {
+        // ── 新 IOS 形式: videoWithContextModel ─────────────────────────────
+        if let vcData = vr["videoWithContextData"] as? [String: Any] {
+            return parseVideoWithContextData(vcData)
+        }
+
+        // ── 旧形式: videoRenderer / compactVideoRenderer ───────────────────
         guard let videoId = vr["videoId"] as? String else { return nil }
 
         // タイトル: videoRenderer → title.runs[0].text
@@ -287,5 +279,140 @@ extension ContentClient {
             viewCountText: viewCount,
             timePostedText: timePosted
         )
+    }
+
+    /// IOS 新形式の videoWithContextData オブジェクトから VideoItem を生成する。
+    ///
+    /// 想定パス:
+    ///   videoId   : onTap.innertubeCommand.watchEndpoint.videoId
+    ///   title     : videoData.metadata.title
+    ///   channel   : videoData.metadata.byline (または channelThumbnail)
+    ///   thumbnail : videoData.thumbnail.image.sources[last].url
+    private static func parseVideoWithContextData(_ data: [String: Any]) -> VideoItem? {
+        // videoId
+        let onTap       = data["onTap"]             as? [String: Any]
+        let itCmd       = onTap?["innertubeCommand"] as? [String: Any]
+        let watchEP     = itCmd?["watchEndpoint"]   as? [String: Any]
+        guard let videoId = watchEP?["videoId"] as? String else { return nil }
+
+        // metadata
+        let videoData   = data["videoData"]         as? [String: Any]
+        let metadata    = videoData?["metadata"]    as? [String: Any]
+
+        // タイトル
+        let title = (metadata?["title"] as? String) ?? videoId
+
+        // チャンネル名: byline または channelName
+        let channelName = (metadata?["byline"] as? String)
+            ?? (metadata?["channelName"] as? String)
+
+        // サムネイル: videoData.thumbnail.image.sources[last].url
+        let thumbImage  = (videoData?["thumbnail"] as? [String: Any])?["image"] as? [String: Any]
+        let thumbSrcs   = thumbImage?["sources"] as? [[String: Any]]
+        let thumbURL    = (thumbSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+
+        // チャンネルアバター: channelThumbnail.image.sources[last].url
+        let chThumbImg  = (data["channelThumbnail"] as? [String: Any])?["image"] as? [String: Any]
+        let chThumbSrcs = chThumbImg?["sources"] as? [[String: Any]]
+        let avatarURL   = (chThumbSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+
+        // 視聴回数・投稿日時
+        let viewCount   = metadata?["shortViewCountText"] as? String
+        let timePosted  = metadata?["publishedTimeText"]  as? String
+
+        return VideoItem(
+            videoId: videoId,
+            title: title,
+            channelName: channelName,
+            thumbnailURL: thumbURL,
+            channelAvatarURL: avatarURL,
+            viewCountText: viewCount,
+            timePostedText: timePosted
+        )
+    }
+}
+
+// MARK: - WKWebView による YouTube ホームページローダー
+
+/// WKWebView で YouTube ホームページを読み込み、window.ytInitialData を JavaScript で取得する。
+/// URLSession では Cookie 認証が機能しないため WKWebView の完全なブラウザセッションを使用する。
+@MainActor
+final class YouTubeWebLoader: NSObject, WKNavigationDelegate {
+    /// 並列ロードを防ぐためのシングルトン参照（完了後に nil に戻す）
+    private static var current: YouTubeWebLoader?
+
+    private var webView: WKWebView?
+    private var continuation: CheckedContinuation<[String: Any]?, Never>?
+
+    static func load(dataStore: WKWebsiteDataStore) async -> [String: Any]? {
+        let loader = YouTubeWebLoader()
+        Self.current = loader
+        defer { Self.current = nil }
+        return await loader.fetch(dataStore: dataStore)
+    }
+
+    private func fetch(dataStore: WKWebsiteDataStore) async -> [String: Any]? {
+        return await withCheckedContinuation { cont in
+            self.continuation = cont
+
+            let cfg = WKWebViewConfiguration()
+            cfg.websiteDataStore = dataStore
+            // JavaScript を有効化（ytInitialData 取得に必要）
+            cfg.preferences.javaScriptEnabled = true
+
+            let wv = WKWebView(
+                frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+                configuration: cfg
+            )
+            wv.navigationDelegate = self
+            self.webView = wv
+
+            strixLog(" YouTubeWebLoader: ロード開始")
+            wv.load(URLRequest(url: URL(string: "https://www.youtube.com/?hl=ja&gl=JP")!))
+
+            // 30秒タイムアウト
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard let self, self.continuation != nil else { return }
+                strixLog(" YouTubeWebLoader: タイムアウト")
+                self.continuation?.resume(returning: nil)
+                self.continuation = nil
+                self.webView = nil
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        strixLog(" YouTubeWebLoader: ページロード完了 URL=\(webView.url?.host ?? "不明")")
+        // JavaScript で ytInitialData を取得する
+        webView.evaluateJavaScript("JSON.stringify(window.ytInitialData || null)") { [weak self] result, error in
+            guard let self else { return }
+            var json: [String: Any]?
+            if let s = result as? String,
+               let d = s.data(using: .utf8) {
+                json = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+            }
+            if let e = error {
+                strixLog(" YouTubeWebLoader: JS エラー: \(e)")
+            }
+            strixLog(" YouTubeWebLoader: ytInitialData \(json != nil ? "取得成功" : "nil")")
+            self.continuation?.resume(returning: json)
+            self.continuation = nil
+            self.webView = nil
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        strixLog(" YouTubeWebLoader: ナビゲーション失敗: \(error)")
+        continuation?.resume(returning: nil)
+        continuation = nil
+        self.webView = nil
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        strixLog(" YouTubeWebLoader: プロビジョナルナビゲーション失敗: \(error)")
+        continuation?.resume(returning: nil)
+        continuation = nil
+        self.webView = nil
     }
 }

@@ -16,8 +16,9 @@ struct LoginView: View {
 
     var body: some View {
         NavigationStack {
-            YouTubeLoginWebView { cookieString in
-                AuthState.shared.save(cookies: cookieString)
+            // Coordinator 内で AuthState.shared.save(cookies:dataStore:) を呼ぶため
+            // ここでは onComplete と dismiss のみ行う
+            YouTubeLoginWebView {
                 onComplete()
                 dismiss()
             }
@@ -34,16 +35,18 @@ struct LoginView: View {
 
 // MARK: - WKWebView ラッパー
 
-/// Google アカウントページを WKWebView で表示し、ログイン完了後にクッキーを抽出する。
+/// Google アカウントページを WKWebView で表示し、ログイン完了後にクッキーと DataStore を保存する。
 struct YouTubeLoginWebView: UIViewRepresentable {
-    let onCookiesExtracted: (String) -> Void
+    /// ログイン完了通知（クッキー保存は Coordinator が直接 AuthState を更新）
+    let onLoginComplete: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onCookiesExtracted: onCookiesExtracted)
+        Coordinator(onLoginComplete: onLoginComplete)
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        // 非永続ストアを使って既存セッションと切り離しクリーンなログインを提供する
+        // 非永続ストアを使って既存セッションと切り離しクリーンなログインを提供する。
+        // このストアはログイン後に AuthState.shared.dataStore として保持される。
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
 
@@ -60,12 +63,12 @@ struct YouTubeLoginWebView: UIViewRepresentable {
     // MARK: - Coordinator
 
     final class Coordinator: NSObject, WKNavigationDelegate {
-        let onCookiesExtracted: (String) -> Void
+        let onLoginComplete: () -> Void
         /// クッキー抽出を一度だけ行うためのフラグ
         private var hasExtracted = false
 
-        init(onCookiesExtracted: @escaping (String) -> Void) {
-            self.onCookiesExtracted = onCookiesExtracted
+        init(onLoginComplete: @escaping () -> Void) {
+            self.onLoginComplete = onLoginComplete
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -75,8 +78,11 @@ struct YouTubeLoginWebView: UIViewRepresentable {
 
             hasExtracted = true
 
-            // ログイン後に youtube.com へ遷移した時点でクッキーを取得する
-            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            // DataStore を保持（URLSession では機能しないため WKWebView で使い回す）
+            let dataStore = webView.configuration.websiteDataStore
+
+            // ページが完全ロードされた後にクッキーを取得する
+            dataStore.httpCookieStore.getAllCookies { cookies in
                 let relevant = cookies.filter {
                     $0.domain.contains("youtube.com") || $0.domain.contains("google.com")
                 }
@@ -86,7 +92,9 @@ struct YouTubeLoginWebView: UIViewRepresentable {
 
                 guard !cookieString.isEmpty else { return }
                 DispatchQueue.main.async {
-                    self.onCookiesExtracted(cookieString)
+                    // クッキー文字列と DataStore の両方を AuthState に保存する
+                    AuthState.shared.save(cookies: cookieString, dataStore: dataStore)
+                    self.onLoginComplete()
                 }
             }
         }

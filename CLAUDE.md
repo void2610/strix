@@ -22,11 +22,23 @@ xcodebuild -project Strix.xcodeproj -scheme Strix -showdestinations
 
 ## 実機ビルド＆インストール（iPhone 16）
 
+### 前提：接続方法について
+
+iOS の CoreDevice 通信ポート（62078）は Wi-Fi インターフェースにのみバインドされるため、
+**Tailscale 単独では接続不可**。以下いずれかが必要：
+
+- **USB 接続**（最も確実）
+- **同じ Wi-Fi ネットワーク**（Mac と iPhone が同一ローカルネットワーク）
+
+ネットワーク越しで使う場合は Xcode → Window → Devices and Simulators → **Connect via network** にチェックを入れておく（同一 Wi-Fi 接続時に設定）。
+
+### ビルド＆インストールコマンド
+
 ```bash
-# デバイス一覧確認
+# デバイスが見えているか確認（Tailscale 接続中に実行）
 xcrun devicectl list devices --columns udid
 
-# 実機向けビルド（USB or Tailscale 接続時）
+# 実機向けビルド
 xcodebuild -project Strix.xcodeproj -scheme Strix \
   -destination "platform=iOS,id=00008140-001C61C436A2801C" \
   -configuration Debug \

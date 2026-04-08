@@ -17,6 +17,10 @@ final class AuthState {
     var cookieString: String?
     var isSignedIn: Bool { cookieString != nil }
 
+    /// ログイン時に使った WKWebsiteDataStore（同一アプリセッション内でのみ有効）。
+    /// アプリ再起動後は nil になるため、クッキーインジェクションにフォールバックする。
+    var dataStore: WKWebsiteDataStore?
+
     static let shared = AuthState()
     private init() {}
 
@@ -25,15 +29,17 @@ final class AuthState {
         cookieString = KeychainHelper.load(key: "yt_cookies")
     }
 
-    /// ログイン完了後にクッキーを保存する
-    func save(cookies: String) {
+    /// ログイン完了後にクッキーと DataStore を保存する
+    func save(cookies: String, dataStore: WKWebsiteDataStore) {
         cookieString = cookies
+        self.dataStore = dataStore
         KeychainHelper.save(key: "yt_cookies", value: cookies)
     }
 
     /// ログアウト：Keychain とブラウザキャッシュを両方クリアする
     func signOut() {
         cookieString = nil
+        dataStore = nil
         KeychainHelper.delete(key: "yt_cookies")
         WKWebsiteDataStore.default().removeData(
             ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
