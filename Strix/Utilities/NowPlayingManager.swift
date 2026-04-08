@@ -18,8 +18,8 @@ final class NowPlayingManager {
         setupAudioSessionObservers()
     }
 
-    /// 現在コントロール対象の AVPlayer
-    private weak var player: AVPlayer?
+    /// 現在コントロール対象の AVPlayer（strong で保持し、次の start() 呼び出しまで確実に停止できるようにする）
+    private var player: AVPlayer?
     /// 再生位置の定期更新タスク
     private var positionUpdateTask: Task<Void, Never>?
 
@@ -27,6 +27,8 @@ final class NowPlayingManager {
 
     /// 動画の再生開始時に呼ぶ。Now Playing 情報を設定してリモートコマンドを有効化する。
     func start(player: AVPlayer, title: String, thumbnailURL: String) {
+        // 前の動画が再生中の場合は停止して同時再生を防ぐ
+        self.player?.pause()
         self.player = player
         activateAudioSession()
         updateNowPlayingInfo(title: title, thumbnailURL: thumbnailURL)
@@ -34,10 +36,11 @@ final class NowPlayingManager {
     }
 
     /// 動画停止・画面離脱時に呼ぶ。Now Playing 情報とタスクをクリアする。
+    /// player 参照は nil にしない。次の start() が呼ばれるまで strong 参照を保持することで、
+    /// PiP 中に onDisappear → stop() で参照が失われても start(new) で旧プレイヤーを確実に停止できる。
     func stop() {
         positionUpdateTask?.cancel()
         positionUpdateTask = nil
-        player = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 

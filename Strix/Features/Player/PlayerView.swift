@@ -31,6 +31,18 @@ final class PlayerViewModel {
     }
 
     func load(videoID: String, modelContext: ModelContext) async {
+        // 再ロード時: 前のプレイヤーを停止して状態をリセットする
+        // これにより player = nil で AVPlayerLayerView が一度ツリーから外れ、
+        // 新しいプレイヤーで再生成されるため同時再生が発生しない
+        player?.pause()
+        player = nil
+        videoInfo = nil
+        relatedVideos = []
+        isLoadingStream = true
+        isLoadingRelated = true
+        streamError = nil
+        playbackRate = 1.0
+
         // ストリームと関連動画を並列取得
         async let streamTask: Void = loadStream(videoID: videoID, modelContext: modelContext)
         async let relatedTask: Void = loadRelated(videoID: videoID)
@@ -138,7 +150,12 @@ struct PlayerView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .task { await vm.load(videoID: videoID, modelContext: modelContext) }
+        .task {
+            // プレイヤーが既に存在する場合は再ロードしない
+            // PiP 復帰・タブ切り替えで onAppear が発火しても二重生成を防ぐ
+            guard vm.player == nil else { return }
+            await vm.load(videoID: videoID, modelContext: modelContext)
+        }
         .onDisappear {
             // バックグラウンド移行時は onDisappear が誤発火することがあるため
             // scenePhase が active のときだけ（= ナビゲーションで離脱したとき）停止する
@@ -252,11 +269,19 @@ private struct AVPlayerLayerView: UIViewControllerRepresentable {
 /// `willResignActive` で `player = nil` にしてバックグラウンド自動停止を無効化し、
 /// `willEnterForeground` で `player` を復元する。
 final class _PlayerViewController: AVPlayerViewController {
+    /// アプリ内で同時に存在できる VC は1つだけ。新しい VC が init されたとき
+    /// 古い VC が PiP 中であれば stopPictureInPicture() で閉じる。
+    private static weak var current: _PlayerViewController?
+
     private let playerRef: AVPlayer
 
     init(player: AVPlayer) {
         self.playerRef = player
         super.init(nibName: nil, bundle: nil)
+        // 既存の VC を停止してから自分をアクティブにする
+        // player = nil にすることで PiP も終了する
+        _PlayerViewController.current?.closeAndStop()
+        _PlayerViewController.current = self
         self.player = player
         // NowPlayingManager が MPNowPlayingInfoCenter を管理するため、
         // AVPlayerViewController の自動更新を無効化する
@@ -264,6 +289,12 @@ final class _PlayerViewController: AVPlayerViewController {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 再生を停止し、PiP が起動中であれば player = nil で終了させる
+    func closeAndStop() {
+        playerRef.pause()
+        player = nil
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
