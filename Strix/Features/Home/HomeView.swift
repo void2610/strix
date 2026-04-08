@@ -28,7 +28,7 @@ final class HomeViewModel {
     }
 
     func load() async {
-        guard videos.isEmpty else { return }
+        guard videos.isEmpty, !isLoading else { return }
         isLoading = true
         error = nil
         async let feedTask: Void = loadFeed()
