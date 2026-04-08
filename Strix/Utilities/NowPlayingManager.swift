@@ -15,6 +15,7 @@ final class NowPlayingManager {
     static let shared = NowPlayingManager()
     private init() {
         setupRemoteCommands()
+        setupAudioSessionObservers()
     }
 
     /// 現在コントロール対象の AVPlayer
@@ -27,6 +28,7 @@ final class NowPlayingManager {
     /// 動画の再生開始時に呼ぶ。Now Playing 情報を設定してリモートコマンドを有効化する。
     func start(player: AVPlayer, title: String, thumbnailURL: String) {
         self.player = player
+        activateAudioSession()
         updateNowPlayingInfo(title: title, thumbnailURL: thumbnailURL)
         startPositionUpdates()
     }
@@ -39,19 +41,91 @@ final class NowPlayingManager {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
+    // MARK: - AVAudioSession
+
+    private func activateAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            strixLog(" AVAudioSession アクティブ化失敗: \(error)")
+        }
+    }
+
+    /// AVAudioSession の割り込み・ルート変更通知を登録する
+    private func setupAudioSessionObservers() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                self?.handleAudioInterruption(notification)
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                self?.handleRouteChange(notification)
+            }
+        }
+    }
+
+    /// 割り込み（電話・他アプリ音声など）への対処
+    private func handleAudioInterruption(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+        switch type {
+        case .began:
+            // 割り込み開始: プレイヤーは自動停止するため何もしない
+            strixLog(" AVAudioSession 割り込み開始")
+
+        case .ended:
+            // 割り込み終了: セッションを再アクティブ化して再生を再開する
+            let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            strixLog(" AVAudioSession 割り込み終了 (shouldResume: \(options.contains(.shouldResume)))")
+            activateAudioSession()
+            if options.contains(.shouldResume) {
+                player?.play()
+            }
+
+        @unknown default:
+            break
+        }
+    }
+
+    /// ヘッドフォン抜き差しなどのルート変更への対処
+    private func handleRouteChange(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let reasonValue = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
+
+        // イヤフォン・ヘッドフォンが抜かれたときは停止（標準的な動作）
+        if reason == .oldDeviceUnavailable {
+            strixLog(" オーディオルート変更: 出力デバイス切断 → 再生停止")
+            player?.pause()
+        }
+    }
+
     // MARK: - Now Playing 情報
 
     private func updateNowPlayingInfo(title: String, thumbnailURL: String) {
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle:          title,
-            MPMediaItemPropertyMediaType:      MPMediaType.anyVideo.rawValue,
+            MPMediaItemPropertyTitle:             title,
+            MPMediaItemPropertyMediaType:         MPMediaType.anyVideo.rawValue,
             MPNowPlayingInfoPropertyIsLiveStream: false,
             MPNowPlayingInfoPropertyPlaybackRate: player?.rate ?? 0,
         ]
 
         // 再生時間・現在位置
-        if let duration = player?.currentItem?.duration,
-           duration.isNumeric {
+        if let duration = player?.currentItem?.duration, duration.isNumeric {
             info[MPMediaItemPropertyPlaybackDuration] = CMTimeGetSeconds(duration)
         }
         if let current = player?.currentTime() {
@@ -93,9 +167,10 @@ final class NowPlayingManager {
     private func setupRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
 
-        // 再生
+        // 再生: セッションを再アクティブ化してから play()
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
+            self?.activateAudioSession()
             self?.player?.play()
             return .success
         }
@@ -111,7 +186,12 @@ final class NowPlayingManager {
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
             guard let player = self?.player else { return .commandFailed }
-            if player.rate == 0 { player.play() } else { player.pause() }
+            if player.rate == 0 {
+                self?.activateAudioSession()
+                player.play()
+            } else {
+                player.pause()
+            }
             return .success
         }
 

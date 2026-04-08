@@ -94,6 +94,7 @@ struct PlayerView: View {
     @State private var vm = PlayerViewModel()
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
@@ -119,6 +120,9 @@ struct PlayerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await vm.load(videoID: videoID, modelContext: modelContext) }
         .onDisappear {
+            // バックグラウンド移行時は onDisappear が誤発火することがあるため
+            // scenePhase が active のときだけ（= ナビゲーションで離脱したとき）停止する
+            guard scenePhase == .active else { return }
             vm.player?.pause()
             NowPlayingManager.shared.stop()
             LiveActivityManager.shared.stop()
