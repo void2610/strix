@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 import YouTubeKit
 
 /// ホームフィード・検索・関連動画を取得するクライアント。
@@ -35,49 +36,33 @@ extension ContentClient {
         let model = YouTubeModel()
         return ContentClient(
             fetchHome: {
-                let cookies = AuthState.shared.cookieString
-                let isSignedIn = cookies != nil && !cookies!.isEmpty
+                let cookies = AuthState.shared.cookieString ?? ""
 
-                if isSignedIn, let c = cookies {
-                    // ログイン済み: Innertube browse API でパーソナライズドフィード取得
+                // ログイン済み: Innertube browse API でパーソナライズドフィード取得
+                if !cookies.isEmpty {
                     do {
-                        let items = try await ContentClient.fetchHomeViaInnertubeAPI(cookies: c)
-                        strixLog(" fetchHomeViaInnertubeAPI: \(items.count) 件取得")
+                        let items = try await ContentClient.fetchHomeViaInnertubeAPI(cookies: cookies)
                         if !items.isEmpty { return items }
-                        strixLog(" fetchHomeViaInnertubeAPI: 空のため YouTubeKit にフォールバック")
                     } catch {
                         strixLog(" fetchHomeViaInnertubeAPI エラー: \(error)")
                     }
 
-                    // ログイン済み YouTubeKit フォールバック
-                    model.cookies = c
+                    // YouTubeKit フォールバック
+                    model.cookies = cookies
                     let (response, _) = await HomeScreenResponse.sendRequest(
                         youtubeModel: model, data: [:]
                     )
                     let ytVideos = (response?.results ?? [])
                         .compactMap { $0 as? YTVideo }
                         .map { $0.toVideoItem }
-                    strixLog(" YouTubeKit HomeScreen: \(ytVideos.count) 件取得")
                     if !ytVideos.isEmpty { return ytVideos }
-
-                    strixLog(" ログイン済みフィード取得失敗: 空を返す")
-                    return []
                 }
 
-                // 未ログイン: Innertube browse API（Cookie なし）
-                do {
-                    let items = try await ContentClient.fetchHomeViaInnertubeAPI(cookies: "")
-                    strixLog(" 未ログイン fetchHomeViaInnertubeAPI: \(items.count) 件取得")
-                    if !items.isEmpty { return items }
-                } catch {
-                    strixLog(" 未ログイン fetchHomeViaInnertubeAPI エラー: \(error)")
-                }
-
-                // 最終フォールバック: トレンド検索
-                model.cookies = ""
+                // 未ログイン または 認証失敗: トレンド検索を表示
+                model.cookies = cookies
                 let (searchResponse, _) = await SearchResponse.sendRequest(
                     youtubeModel: model,
-                    data: [.query: "trending music 2025"]
+                    data: [.query: "人気 YouTube 日本 2025"]
                 )
                 return (searchResponse?.results ?? [])
                     .compactMap { $0 as? YTVideo }
@@ -113,8 +98,43 @@ extension ContentClient {
 
 extension ContentClient {
 
-    /// URLSession で Innertube /browse API を叩いてホームフィードを取得する。
-    /// WEB クライアントを使うことで videoRenderer 形式のレスポンスが得られる。
+    /// Cookie 文字列の重複を除去する（後勝ち: 同名が複数あれば最後の値を採用）
+    private static func deduplicateCookies(_ cookieString: String) -> String {
+        var seen: [String: String] = [:]
+        var order: [String] = []
+        for pair in cookieString.components(separatedBy: "; ") {
+            guard let eqIdx = pair.firstIndex(of: "=") else { continue }
+            let name = String(pair[pair.startIndex..<eqIdx])
+            guard !name.isEmpty else { continue }
+            if seen[name] == nil { order.append(name) }
+            seen[name] = pair
+        }
+        return order.compactMap { seen[$0] }.joined(separator: "; ")
+    }
+
+    /// SAPISID ハッシュを生成して Authorization ヘッダー用の文字列を返す。
+    /// 形式: SAPISIDHASH <timestamp>_<SHA1(timestamp + " " + sapisid + " " + origin)>
+    /// __Secure-3PAPISID が優先（なければ SAPISID にフォールバック）
+    private static func buildSapisidHash(from cookieString: String) -> String? {
+        let pairs = cookieString.components(separatedBy: "; ")
+        func cookieValue(for name: String) -> String? {
+            pairs.first(where: { $0.hasPrefix("\(name)=") })
+                .map { String($0.dropFirst("\(name)=".count)) }
+                .flatMap { $0.isEmpty ? nil : $0 }
+        }
+        guard let sapisid = cookieValue(for: "__Secure-3PAPISID")
+                         ?? cookieValue(for: "SAPISID") else { return nil }
+
+        let origin = "https://www.youtube.com"
+        let timestamp = Int(Date().timeIntervalSince1970)
+        guard let data = "\(timestamp) \(sapisid) \(origin)".data(using: .utf8) else { return nil }
+        let hash = Insecure.SHA1.hash(data: data)
+            .map { String(format: "%02x", $0) }.joined()
+        return "SAPISIDHASH \(timestamp)_\(hash)"
+    }
+
+    /// URLSession で Innertube /browse (WEB client) を叩いてホームフィードを取得する。
+    /// 認証: Cookie ヘッダー直接設定 + SAPISIDHASH + X-Goog-AuthUser: 0
     /// cookies が空の場合は未ログイン状態でリクエストする。
     private static func fetchHomeViaInnertubeAPI(cookies: String) async throws -> [VideoItem] {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
@@ -123,30 +143,55 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
         request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
         if !cookies.isEmpty {
-            request.setValue(cookies, forHTTPHeaderField: "Cookie")
+            let deduped = deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            // YouTube 認証に必須のヘッダー（これがないと logged_in:0 になる）
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
+        }
+
+        // VISITOR_INFO1_LIVE から visitorData を取得してコンテキストに含める
+        let visitorData = deduplicateCookies(cookies)
+            .components(separatedBy: "; ")
+            .first(where: { $0.hasPrefix("VISITOR_INFO1_LIVE=") })
+            .map { String($0.dropFirst("VISITOR_INFO1_LIVE=".count)) }
+
+        var clientContext: [String: Any] = [
+            "clientName": "WEB",
+            "clientVersion": "2.20241201.01.00",
+            "hl": "ja",
+            "gl": "JP"
+        ]
+        if let vd = visitorData, !vd.isEmpty {
+            clientContext["visitorData"] = vd
         }
 
         let body: [String: Any] = [
             "browseId": "FEwhat_to_watch",
-            "context": [
-                "client": [
-                    "clientName": "WEB",
-                    "clientVersion": "2.20241201.01.00",
-                    "hl": "ja",
-                    "gl": "JP"
-                ]
-            ]
+            "context": ["client": clientContext]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await URLSession.shared.data(for: request)
+        // Cookie ヘッダーをシステムに上書きされないよう httpShouldSetCookies=false に設定
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (data, _) = try await session.data(for: request)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return []
         }
-
-        let videos = findVideoRenderers(in: json)
-        return videos.compactMap { parseVideoRenderer($0) }
+        return findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
     }
 
     /// JSON ツリーを再帰的に探索して動画 Renderer を全て抽出する。
@@ -154,17 +199,15 @@ extension ContentClient {
     /// IOS 新形式 → elementRenderer 内の videoWithContextModel
     private static func findVideoRenderers(in json: Any) -> [[String: Any]] {
         if let dict = json as? [String: Any] {
-            if let vr = dict["videoRenderer"] as? [String: Any] {
-                return [vr]
-            }
-            if let vr = dict["compactVideoRenderer"] as? [String: Any] {
-                return [vr]
-            }
-            // IOS 新形式: elementRenderer.newElement.type.componentType.model.videoWithContextModel
+            // WEB 形式
+            if let vr = dict["videoRenderer"] as? [String: Any] { return [vr] }
+            if let vr = dict["compactVideoRenderer"] as? [String: Any] { return [vr] }
+            // IOS 新形式: videoWithContextModel が直接キーとして現れる場合
+            if let vr = dict["videoWithContextModel"] as? [String: Any] { return [vr] }
+            // IOS 旧形式: elementRenderer 内の決まったパス
             if let el = dict["elementRenderer"] as? [String: Any],
-               let item = extractVideoWithContextModel(from: el) {
-                return [item]
-            }
+               let item = extractVideoWithContextModel(from: el) { return [item] }
+            // その他のキーを再帰的に探索
             return dict.values.flatMap { findVideoRenderers(in: $0) }
         } else if let array = json as? [Any] {
             return array.flatMap { findVideoRenderers(in: $0) }
