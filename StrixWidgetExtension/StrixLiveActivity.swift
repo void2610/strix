@@ -9,10 +9,11 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
-// MARK: - Widget Extension 本体
+// MARK: - Live Activity Widget
 
-@main
-struct StrixWidgetExtension: Widget {
+/// ダイナミックアイランド・ロック画面の Live Activity Widget。
+/// StrixWidgetExtensionBundle からロードされる。
+struct StrixLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: StrixActivityAttributes.self) { context in
             // ロック画面・バナー表示
