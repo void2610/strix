@@ -118,7 +118,7 @@ strix/
 │   │       └── VideoCardView.swift  # 共通カード・行ビュー
 │   ├── Clients/
 │   │   ├── YouTubeClient.swift      # ストリーム URL 取得（Innertube IOS client）
-│   │   └── ContentClient.swift      # ホーム/検索/関連動画（YouTubeKit）
+│   │   └── ContentClient.swift      # ホーム（Innertube WEB client）/検索/関連動画（YouTubeKit）
 │   └── Utilities/
 │       └── VideoID.swift            # URL・動画 ID パーサー
 ├── StrixTests/
@@ -139,7 +139,12 @@ strix/
 - **ストリーム取得**: YouTubeKit は使わず Innertube API を IOS クライアント (v21.13.6) で直接叩く
   - `clientName: "IOS"`, `X-Youtube-Client-Name: 5` が必須
   - iOS クライアントは通常動画でも `hlsManifestUrl`（M3U8）を返す
-- **ホーム/検索/関連**: YouTubeKit の `HomeScreenResponse` / `SearchResponse` / `MoreVideoInfosResponse` を使用
-  - ログインなしでは HomeScreenResponse が空 → SearchResponse にフォールバック
+- **ホームフィード**: `ContentClient.fetchHomeViaInnertubeAPI` で Innertube `/browse` (WEB client) を URLSession で直接呼ぶ
+  - 認証: `Cookie` ヘッダー直接設定 + `SAPISIDHASH` (`Authorization`) + `X-Goog-AuthUser: 0`（必須・欠落すると `logged_in:0`）
+  - `httpShouldSetCookies = false` の ephemeral session でシステムの Cookie 上書きを防止
+  - `__Secure-3PAPISID`（なければ `SAPISID`）から SHA1 ハッシュで SAPISIDHASH を計算（CryptoKit）
+  - WKWebView 由来の Cookie は同名が重複するため `deduplicateCookies`（後勝ち）で除去
+  - フォールバック順: Innertube browse API → YouTubeKit `HomeScreenResponse` → 検索（`人気 YouTube 日本 2025`）
+- **検索/関連動画**: YouTubeKit の `SearchResponse` / `MoreVideoInfosResponse` を使用
 - `VideoInfosResponse.streamingURL` は HLS manifest URL（ライブ配信専用ではなく IOS クライアントなら通常動画でも取得可）
 
