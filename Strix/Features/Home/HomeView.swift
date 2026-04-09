@@ -48,6 +48,9 @@ final class HomeViewModel {
         do {
             videos = try await client.fetchHome()
         } catch {
+            // タスクキャンセル時は error を書き込まない
+            // （旧タスクのキャンセルエラーが新タスクの error = nil を上書きする競合を防ぐ）
+            guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
         }
     }
