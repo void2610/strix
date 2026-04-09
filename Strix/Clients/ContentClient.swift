@@ -44,8 +44,6 @@ extension ContentClient {
                         let items = try await ContentClient.fetchHomeViaInnertubeAPI(cookies: cookies)
                         if !items.isEmpty { return items }
                     } catch {
-                        // タスクキャンセル時は上位に伝播させてフォールバックしない
-                        if Task.isCancelled { throw error }
                         strixLog(" fetchHomeViaInnertubeAPI エラー: \(error)")
                     }
 

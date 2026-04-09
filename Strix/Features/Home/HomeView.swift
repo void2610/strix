@@ -21,6 +21,9 @@ final class HomeViewModel {
 
     private let client: ContentClient
     private let accountClient: AccountClient
+    /// ロード世代カウンター。reload() のたびにインクリメントし、
+    /// 古い世代のタスクが結果を書き込むのを防ぐ。
+    private var loadGeneration = 0
 
     init(client: ContentClient = .live, accountClient: AccountClient = .live) {
         self.client = client
@@ -29,35 +32,40 @@ final class HomeViewModel {
 
     func load() async {
         guard videos.isEmpty, !isLoading else { return }
+        loadGeneration += 1
+        let gen = loadGeneration
         isLoading = true
         error = nil
         defer { isLoading = false }
-        async let feedTask: Void = loadFeed()
-        async let playlistTask: Void = loadQuickPlaylists()
+        async let feedTask: Void = loadFeed(generation: gen)
+        async let playlistTask: Void = loadQuickPlaylists(generation: gen)
         _ = await (feedTask, playlistTask)
     }
 
     func reload() async {
-        isLoading = false  // キャンセルによるスタックをリセット
+        loadGeneration += 1  // 進行中のロードを世代で無効化
+        isLoading = false
         videos = []
         quickPlaylists = []
         await load()
     }
 
-    private func loadFeed() async {
+    private func loadFeed(generation: Int) async {
         do {
-            videos = try await client.fetchHome()
+            let result = try await client.fetchHome()
+            // 古い世代のタスクは結果を破棄する
+            guard generation == loadGeneration else { return }
+            videos = result
         } catch {
-            // タスクキャンセル時は error を書き込まない
-            // （旧タスクのキャンセルエラーが新タスクの error = nil を上書きする競合を防ぐ）
-            guard !Task.isCancelled else { return }
+            guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
         }
     }
 
-    private func loadQuickPlaylists() async {
+    private func loadQuickPlaylists(generation: Int) async {
         guard AuthState.shared.isSignedIn else { return }
         guard let library = try? await accountClient.fetchLibrary() else { return }
+        guard generation == loadGeneration else { return }
         var items: [YTPlaylist] = []
         if let wl = library.watchLater { items.append(wl) }
         if let likes = library.likes { items.append(likes) }
