@@ -31,13 +31,14 @@ final class HomeViewModel {
         guard videos.isEmpty, !isLoading else { return }
         isLoading = true
         error = nil
+        defer { isLoading = false }
         async let feedTask: Void = loadFeed()
         async let playlistTask: Void = loadQuickPlaylists()
         _ = await (feedTask, playlistTask)
-        isLoading = false
     }
 
     func reload() async {
+        isLoading = false  // キャンセルによるスタックをリセット
         videos = []
         quickPlaylists = []
         await load()

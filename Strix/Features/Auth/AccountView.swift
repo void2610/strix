@@ -13,9 +13,9 @@ import NukeUI
 
 @Observable
 final class AccountViewModel {
-    var accountInfo: AccountInfosResponse?
+    var accountInfo: AccountInfo?
     var library: AccountLibraryResponse?
-    var isLoading = true
+    var isLoading = false
 
     private let accountClient: AccountClient
 
@@ -24,10 +24,19 @@ final class AccountViewModel {
     }
 
     func load() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
         async let infoTask: Void = loadInfo()
         async let libraryTask: Void = loadLibrary()
         _ = await (infoTask, libraryTask)
+    }
+
+    func reload() async {
         isLoading = false
+        accountInfo = nil
+        library = nil
+        await load()
     }
 
     private func loadInfo() async {
@@ -73,6 +82,7 @@ struct AccountView: View {
         .navigationDestination(for: String.self) { videoID in
             PlayerView(videoID: videoID)
         }
+        .refreshable { await vm.reload() }
         .sheet(isPresented: $showLog) { LogView() }
         .task { await vm.load() }
     }
@@ -83,7 +93,7 @@ struct AccountView: View {
         Section {
             HStack(spacing: 14) {
                 // アバター
-                if let avatarURL = vm.accountInfo?.avatar.last?.url {
+                if let avatarURL = vm.accountInfo?.avatarURL {
                     LazyImage(url: avatarURL) { state in
                         if let image = state.image {
                             image.resizable().scaledToFill()
@@ -105,7 +115,7 @@ struct AccountView: View {
                     } else {
                         Text("YouTubeアカウント").font(.headline)
                     }
-                    if let handle = vm.accountInfo?.channelHandle {
+                    if let handle = vm.accountInfo?.handle {
                         Text(handle).font(.subheadline).foregroundStyle(.secondary)
                     } else {
                         Text("ログイン済み").font(.subheadline).foregroundStyle(.secondary)

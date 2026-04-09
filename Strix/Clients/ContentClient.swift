@@ -101,7 +101,7 @@ extension ContentClient {
 extension ContentClient {
 
     /// Cookie 文字列の重複を除去する（後勝ち: 同名が複数あれば最後の値を採用）
-    private static func deduplicateCookies(_ cookieString: String) -> String {
+    static func deduplicateCookies(_ cookieString: String) -> String {
         var seen: [String: String] = [:]
         var order: [String] = []
         for pair in cookieString.components(separatedBy: "; ") {
@@ -117,7 +117,7 @@ extension ContentClient {
     /// SAPISID ハッシュを生成して Authorization ヘッダー用の文字列を返す。
     /// 形式: SAPISIDHASH <timestamp>_<SHA1(timestamp + " " + sapisid + " " + origin)>
     /// __Secure-3PAPISID が優先（なければ SAPISID にフォールバック）
-    private static func buildSapisidHash(from cookieString: String) -> String? {
+    static func buildSapisidHash(from cookieString: String) -> String? {
         let pairs = cookieString.components(separatedBy: "; ")
         func cookieValue(for name: String) -> String? {
             pairs.first(where: { $0.hasPrefix("\(name)=") })
