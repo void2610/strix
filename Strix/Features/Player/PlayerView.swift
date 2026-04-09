@@ -268,12 +268,15 @@ private struct AVPlayerLayerView: UIViewControllerRepresentable {
 /// `AVPlayerViewController` のサブクラス。
 /// `willResignActive` で `player = nil` にしてバックグラウンド自動停止を無効化し、
 /// `willEnterForeground` で `player` を復元する。
-final class _PlayerViewController: AVPlayerViewController {
+/// PiP 中は `player = nil` をスキップして PiP を維持する。
+final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControllerDelegate {
     /// アプリ内で同時に存在できる VC は1つだけ。新しい VC が init されたとき
     /// 古い VC が PiP 中であれば stopPictureInPicture() で閉じる。
     private static weak var current: _PlayerViewController?
 
     private let playerRef: AVPlayer
+    /// PiP がアクティブかどうかをデリゲートで追跡する
+    private var isPiPActive = false
 
     init(player: AVPlayer) {
         self.playerRef = player
@@ -283,6 +286,7 @@ final class _PlayerViewController: AVPlayerViewController {
         _PlayerViewController.current?.closeAndStop()
         _PlayerViewController.current = self
         self.player = player
+        self.delegate = self
         // NowPlayingManager が MPNowPlayingInfoCenter を管理するため、
         // AVPlayerViewController の自動更新を無効化する
         self.updatesNowPlayingInfoCenter = false
@@ -314,14 +318,26 @@ final class _PlayerViewController: AVPlayerViewController {
 
     deinit { NotificationCenter.default.removeObserver(self) }
 
-    /// バックグラウンド移行直前: ViewController とプレイヤーの接続を切り離して iOS の自動停止を無効化する
+    /// バックグラウンド移行直前: ViewController とプレイヤーの接続を切り離して iOS の自動停止を無効化する。
+    /// PiP 中は切り離すと PiP が終了するためスキップする。
     @objc private func willResignActive() {
+        guard !isPiPActive else { return }
         player = nil
     }
 
     /// フォアグラウンド復帰直前: ViewController にプレイヤーを再接続して映像表示を再開する
     @objc private func willEnterForeground() {
         player = playerRef
+    }
+
+    // MARK: - AVPlayerViewControllerDelegate
+
+    func playerViewControllerDidStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+        isPiPActive = true
+    }
+
+    func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+        isPiPActive = false
     }
 }
 
