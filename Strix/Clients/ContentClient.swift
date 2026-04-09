@@ -37,36 +37,8 @@ extension ContentClient {
         return ContentClient(
             fetchHome: {
                 let cookies = AuthState.shared.cookieString ?? ""
-
-                // ログイン済み: Innertube browse API でパーソナライズドフィード取得
-                if !cookies.isEmpty {
-                    do {
-                        let items = try await ContentClient.fetchHomeViaInnertubeAPI(cookies: cookies)
-                        if !items.isEmpty { return items }
-                    } catch {
-                        strixLog(" fetchHomeViaInnertubeAPI エラー: \(error)")
-                    }
-
-                    // YouTubeKit フォールバック
-                    model.cookies = cookies
-                    let (response, _) = await HomeScreenResponse.sendRequest(
-                        youtubeModel: model, data: [:]
-                    )
-                    let ytVideos = (response?.results ?? [])
-                        .compactMap { $0 as? YTVideo }
-                        .map { $0.toVideoItem }
-                    if !ytVideos.isEmpty { return ytVideos }
-                }
-
-                // 未ログイン または 認証失敗: トレンド検索を表示
-                model.cookies = cookies
-                let (searchResponse, _) = await SearchResponse.sendRequest(
-                    youtubeModel: model,
-                    data: [.query: "人気 YouTube 日本 2025"]
-                )
-                return (searchResponse?.results ?? [])
-                    .compactMap { $0 as? YTVideo }
-                    .map { $0.toVideoItem }
+                guard !cookies.isEmpty else { return [] }
+                return try await ContentClient.fetchHomeViaInnertubeAPI(cookies: cookies)
             },
             search: { query in
                 model.cookies = AuthState.shared.cookieString ?? ""
