@@ -21,11 +21,21 @@ final class PlayerViewModel {
     var streamError: Error?
     /// 現在の再生速度（1.0 または 2.0）
     var playbackRate: Float = 1.0
+    /// ループ再生が有効かどうか
+    var isLooping = false
+    /// 次動画を自動再生するかどうか
+    var autoPlayNext = false
+    /// auto-next 時に View がセットした次動画 ID（View の onChange で消費される）
+    var autoNextVideoID: String?
+    /// 現在ロード済みの動画 ID（View の .task(id:) による二重ロードを防ぐ）
+    private(set) var loadedVideoID: String?
 
     private let youtubeClient: YouTubeClient
     private let contentClient: ContentClient
     /// rate 変更監視トークン（再生再開時に playbackRate を復元するため）
     private var rateObserver: Any?
+    /// 動画終端監視トークン（ループ・自動再生で使用）
+    private var endObserver: Any?
 
     init(youtubeClient: YouTubeClient = .live, contentClient: ContentClient = .live) {
         self.youtubeClient = youtubeClient
@@ -36,8 +46,12 @@ final class PlayerViewModel {
         // 再ロード時: 前のプレイヤーを停止して状態をリセットする
         // これにより player = nil で AVPlayerLayerView が一度ツリーから外れ、
         // 新しいプレイヤーで再生成されるため同時再生が発生しない
+        loadedVideoID = videoID
         if let obs = rateObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = endObserver  { NotificationCenter.default.removeObserver(obs) }
         rateObserver = nil
+        endObserver = nil
+        autoNextVideoID = nil
         player?.pause()
         player = nil
         videoInfo = nil
@@ -69,6 +83,20 @@ final class PlayerViewModel {
                 guard let self, let p = self.player, p.rate > 0 else { return }
                 if p.rate != self.playbackRate {
                     p.rate = self.playbackRate
+                }
+            }
+            // 動画終端: ループ or 次動画自動再生
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: avPlayer.currentItem,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                if self.isLooping {
+                    self.player?.seek(to: .zero)
+                    self.player?.play()
+                } else if self.autoPlayNext, let next = self.relatedVideos.first {
+                    self.autoNextVideoID = next.videoId
                 }
             }
             avPlayer.play()
@@ -108,6 +136,16 @@ final class PlayerViewModel {
         player?.rate = playbackRate
     }
 
+    /// ループ再生のオン/オフを切り替える
+    func toggleLoop() {
+        isLooping.toggle()
+    }
+
+    /// 次動画自動再生のオン/オフを切り替える
+    func toggleAutoPlayNext() {
+        autoPlayNext.toggle()
+    }
+
     private func saveToHistory(videoID: String, info: VideoInfo, modelContext: ModelContext) {
         let video = WatchedVideo(
             videoID: videoID,
@@ -120,11 +158,17 @@ final class PlayerViewModel {
 
 struct PlayerView: View {
     let videoID: String
+    @State private var currentVideoID: String
 
     @State private var vm = PlayerViewModel()
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
+
+    init(videoID: String) {
+        self.videoID = videoID
+        self._currentVideoID = State(initialValue: videoID)
+    }
 
     var body: some View {
         ScrollView {
@@ -132,13 +176,25 @@ struct PlayerView: View {
                 // 動画プレイヤー（画面幅 × 16:9）
                 playerSection
 
-                // 倍速ボタン（プレイヤー直下・右寄せ）
+                // コントロールボタン（ループ・自動再生・倍速）
                 if !vm.isLoadingStream && vm.streamError == nil {
-                    HStack {
+                    HStack(spacing: 8) {
+                        // ループ切り替え
+                        playerControlButton(
+                            icon: vm.isLooping ? "repeat.1" : "repeat",
+                            isActive: vm.isLooping
+                        ) { vm.toggleLoop() }
+
+                        // 次動画自動再生切り替え
+                        playerControlButton(
+                            icon: "forward.end.fill",
+                            isActive: vm.autoPlayNext
+                        ) { vm.toggleAutoPlayNext() }
+
                         Spacer()
-                        Button {
-                            vm.togglePlaybackRate()
-                        } label: {
+
+                        // 倍速切り替え
+                        Button { vm.togglePlaybackRate() } label: {
                             Text(vm.playbackRate == 1.0 ? "1×" : "2×")
                                 .font(.caption.bold())
                                 .padding(.horizontal, 10)
@@ -166,11 +222,16 @@ struct PlayerView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            // プレイヤーが既に存在する場合は再ロードしない
-            // PiP 復帰・タブ切り替えで onAppear が発火しても二重生成を防ぐ
-            guard vm.player == nil else { return }
-            await vm.load(videoID: videoID, modelContext: modelContext)
+        .task(id: currentVideoID) {
+            // loadedVideoID が一致する場合は再ロードしない
+            // （PiP 復帰・ナビゲーションでのビュー再表示による二重ロードを防ぐ）
+            guard vm.loadedVideoID != currentVideoID else { return }
+            await vm.load(videoID: currentVideoID, modelContext: modelContext)
+        }
+        .onChange(of: vm.autoNextVideoID) { _, nextID in
+            guard let nextID else { return }
+            vm.autoNextVideoID = nil
+            currentVideoID = nextID
         }
         .onDisappear {
             // バックグラウンド移行時は onDisappear が誤発火することがあるため
@@ -180,6 +241,20 @@ struct PlayerView: View {
             NowPlayingManager.shared.stop()
             LiveActivityManager.shared.stop()
         }
+    }
+
+    // MARK: - コントロールボタン
+
+    private func playerControlButton(icon: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.caption.bold())
+                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.thinMaterial, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - プレイヤー
