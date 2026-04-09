@@ -24,6 +24,8 @@ final class PlayerViewModel {
 
     private let youtubeClient: YouTubeClient
     private let contentClient: ContentClient
+    /// rate 変更監視トークン（再生再開時に playbackRate を復元するため）
+    private var rateObserver: Any?
 
     init(youtubeClient: YouTubeClient = .live, contentClient: ContentClient = .live) {
         self.youtubeClient = youtubeClient
@@ -34,6 +36,8 @@ final class PlayerViewModel {
         // 再ロード時: 前のプレイヤーを停止して状態をリセットする
         // これにより player = nil で AVPlayerLayerView が一度ツリーから外れ、
         // 新しいプレイヤーで再生成されるため同時再生が発生しない
+        if let obs = rateObserver { NotificationCenter.default.removeObserver(obs) }
+        rateObserver = nil
         player?.pause()
         player = nil
         videoInfo = nil
@@ -55,6 +59,18 @@ final class PlayerViewModel {
             videoInfo = info
             let avPlayer = AVPlayer(url: info.streamURL)
             player = avPlayer
+            // PiP コントロールで再生再開すると rate が 1.0 に戻るため、
+            // rateDidChangeNotification で監視して playbackRate を復元する
+            rateObserver = NotificationCenter.default.addObserver(
+                forName: AVPlayer.rateDidChangeNotification,
+                object: avPlayer,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, let p = self.player, p.rate > 0 else { return }
+                if p.rate != self.playbackRate {
+                    p.rate = self.playbackRate
+                }
+            }
             avPlayer.play()
             isLoadingStream = false
             // コントロールセンター・ロック画面の Now Playing を開始する
