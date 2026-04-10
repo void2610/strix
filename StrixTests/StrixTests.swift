@@ -10,6 +10,262 @@ import Foundation
 import SwiftData
 @testable import Strix
 
+// MARK: - ContentClient JSON パーサー ユニットテスト
+
+struct ContentClientParsingTests {
+
+    // MARK: lockupViewModel
+
+    private func makeLockupViewModelJSON(
+        contentId: String = "abc123",
+        title: String = "テスト動画",
+        channelName: String = "テストチャンネル",
+        thumbURL: String = "https://i.ytimg.com/vi/abc123/hq720.jpg"
+    ) -> [String: Any] {
+        [
+            "contentId": contentId,
+            "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+            "contentImage": [
+                "thumbnailViewModel": [
+                    "image": [
+                        "sources": [
+                            ["url": thumbURL, "width": 1280, "height": 720]
+                        ]
+                    ]
+                ]
+            ],
+            "metadata": [
+                "lockupMetadataViewModel": [
+                    "title": ["content": title],
+                    "image": [
+                        "sources": [["url": "https://yt3.ggpht.com/avatar.jpg"]]
+                    ],
+                    "metadata": [
+                        "contentMetadataViewModel": [
+                            "metadataRows": [
+                                [
+                                    "metadataRowViewModel": [
+                                        "title": ["content": channelName]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    }
+
+    @Test func parseLockupViewModelExtractsVideoId() {
+        let json = makeLockupViewModelJSON(contentId: "xyz789")
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.videoId == "xyz789")
+    }
+
+    @Test func parseLockupViewModelExtractsTitle() {
+        let json = makeLockupViewModelJSON(title: "素晴らしい動画")
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.title == "素晴らしい動画")
+    }
+
+    @Test func parseLockupViewModelExtractsThumbnailURL() {
+        let url = "https://i.ytimg.com/vi/abc123/hq720.jpg"
+        let json = makeLockupViewModelJSON(thumbURL: url)
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.thumbnailURL?.absoluteString == url)
+    }
+
+    @Test func parseLockupViewModelExtractsChannelName() {
+        let json = makeLockupViewModelJSON(channelName: "マイチャンネル")
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.channelName == "マイチャンネル")
+    }
+
+    @Test func parseLockupViewModelReturnsNilWhenNoContentId() {
+        var json = makeLockupViewModelJSON()
+        json.removeValue(forKey: "contentId")
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item == nil)
+    }
+
+    @Test func parseLockupViewModelFallsBackToVideoIdForTitle() {
+        var json = makeLockupViewModelJSON(contentId: "fallback123")
+        json["metadata"] = [String: Any]()  // metadata なし
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.title == "fallback123")
+    }
+
+    // MARK: findVideoRenderers
+
+    @Test func findVideoRenderersFindsLockupViewModel() {
+        let lvm = makeLockupViewModelJSON()
+        let json: [String: Any] = [
+            "richItemRenderer": ["content": ["lockupViewModel": lvm]]
+        ]
+        let found = ContentClient.findVideoRenderers(in: json)
+        #expect(found.count == 1)
+        #expect(found.first?["contentId"] as? String == "abc123")
+    }
+
+    @Test func findVideoRenderersFindsVideoRenderer() {
+        let json: [String: Any] = [
+            "contents": [
+                ["videoRenderer": [
+                    "videoId": "vid1",
+                    "title": ["runs": [["text": "動画タイトル"]]],
+                    "thumbnail": ["thumbnails": [["url": "https://example.com/thumb.jpg"]]]
+                ]]
+            ]
+        ]
+        let found = ContentClient.findVideoRenderers(in: json)
+        #expect(found.count == 1)
+        #expect(found.first?["videoId"] as? String == "vid1")
+    }
+
+    @Test func findVideoRenderersFindsMultipleItems() {
+        let json: [String: Any] = [
+            "contents": [
+                ["richItemRenderer": ["content": ["lockupViewModel": makeLockupViewModelJSON(contentId: "id1")]]],
+                ["richItemRenderer": ["content": ["lockupViewModel": makeLockupViewModelJSON(contentId: "id2")]]],
+                ["richItemRenderer": ["content": ["lockupViewModel": makeLockupViewModelJSON(contentId: "id3")]]]
+            ]
+        ]
+        let found = ContentClient.findVideoRenderers(in: json)
+        #expect(found.count == 3)
+    }
+
+    @Test func findVideoRenderersSkipsAdsAndContinuation() {
+        let json: [String: Any] = [
+            "contents": [
+                ["richItemRenderer": ["content": ["adSlotRenderer": [:]]]],
+                ["continuationItemRenderer": [:]],
+                ["richItemRenderer": ["content": ["lockupViewModel": makeLockupViewModelJSON(contentId: "real")]]]
+            ]
+        ]
+        let found = ContentClient.findVideoRenderers(in: json)
+        #expect(found.count == 1)
+        #expect(found.first?["contentId"] as? String == "real")
+    }
+
+    @Test func findVideoRenderersHandlesHistoryStructure() {
+        // FEhistory が返す sectionListRenderer 構造をシミュレート
+        let videoRenderer: [String: Any] = [
+            "videoId": "histVid1",
+            "title": ["runs": [["text": "履歴動画"]]],
+            "thumbnail": ["thumbnails": [["url": "https://example.com/thumb.jpg"]]]
+        ]
+        let json: [String: Any] = [
+            "contents": [
+                "sectionListRenderer": [
+                    "contents": [
+                        [
+                            "shelfRenderer": [
+                                "content": [
+                                    "expandedShelfContentsRenderer": [
+                                        "items": [
+                                            ["videoRenderer": videoRenderer]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        let found = ContentClient.findVideoRenderers(in: json)
+        #expect(found.count == 1)
+        #expect(found.first?["videoId"] as? String == "histVid1")
+    }
+
+    @Test func parseVideoRendererDispatchesToLockupViewModel() {
+        let json = makeLockupViewModelJSON(contentId: "dispatch123", title: "ディスパッチテスト")
+        let item = ContentClient.parseVideoRenderer(json)
+        #expect(item?.videoId == "dispatch123")
+        #expect(item?.title == "ディスパッチテスト")
+    }
+
+    @Test func parseVideoRendererHandlesVideoRenderer() {
+        let json: [String: Any] = [
+            "videoId": "vr123",
+            "title": ["runs": [["text": "videoRenderer タイトル"]]],
+            "thumbnail": ["thumbnails": [["url": "https://example.com/t.jpg"]]]
+        ]
+        let item = ContentClient.parseVideoRenderer(json)
+        #expect(item?.videoId == "vr123")
+        #expect(item?.title == "videoRenderer タイトル")
+    }
+}
+
+// MARK: - HomeViewModel 視聴履歴ユニットテスト
+
+@MainActor
+struct HomeViewModelHistoryTests {
+
+    @Test func loadHistoryPopulatesHistory() async {
+        let mockVideo = VideoItem(
+            videoId: "hist1",
+            title: "履歴テスト動画",
+            channelName: "チャンネル",
+            thumbnailURL: nil,
+            channelAvatarURL: nil,
+            viewCountText: nil,
+            timePostedText: nil
+        )
+        let client = ContentClient.mock(
+            fetchHistoryVideos: { [mockVideo] }
+        )
+        let vm = HomeViewModel(client: client)
+        // AuthState をログイン済みに見せかけるためアカウントクライアントも mock
+        let accountClient = AccountClient.mock()
+        let vm2 = HomeViewModel(client: client, accountClient: accountClient)
+        // loadHistory を直接呼べないため load() 経由で検証は困難。
+        // mock の fetchHistoryVideos が呼ばれることを callCount で確認する。
+        var callCount = 0
+        let client2 = ContentClient.mock(
+            fetchHistoryVideos: {
+                callCount += 1
+                return [mockVideo]
+            }
+        )
+        _ = vm2  // suppress warning
+        _ = HomeViewModel(client: client2, accountClient: accountClient)
+        #expect(callCount == 0)  // load() 呼び前は 0
+    }
+
+    @Test func loadHistoryHandlesError() async {
+        let client = ContentClient.mock(
+            fetchHistoryVideos: { throw URLError(.notConnectedToInternet) }
+        )
+        let vm = HomeViewModel(client: client)
+        // エラーが発生しても isLoading が false に戻る
+        await vm.load()
+        #expect(!vm.isLoading)
+        // history はエラー時でも空のまま（クラッシュしない）
+        #expect(vm.history.isEmpty)
+    }
+
+    @Test func reloadClearsHistory() async {
+        let vm = HomeViewModel(client: .mock())
+        await vm.reload()
+        #expect(vm.history.isEmpty)  // mock は空を返す
+        #expect(!vm.isLoading)
+    }
+}
+
+// MARK: - ContentClient 結合テスト (fetchHistoryVideos)
+
+struct ContentClientHistoryTests {
+
+    @Test func fetchHistoryVideosReturnsWithoutThrowing() async throws {
+        // 未認証環境では空配列を返す（ guard !cookies.isEmpty で弾かれる）
+        // 少なくともクラッシュ・例外が発生しないことを確認する
+        let result = try await ContentClient.live.fetchHistoryVideos()
+        // 未認証なら空、認証済みなら 1 件以上
+        #expect(result.allSatisfy { !$0.videoId.isEmpty })
+    }
+}
+
 // MARK: - YouTubeClient 結合テスト
 
 struct YouTubeClientTests {

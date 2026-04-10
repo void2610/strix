@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import SwiftData
 import YouTubeKit
 import NukeUI
 
@@ -16,6 +15,7 @@ import NukeUI
 final class HomeViewModel {
     var videos: [VideoItem] = []
     var quickPlaylists: [YTPlaylist] = []
+    var history: [VideoItem] = []
     var isLoading = false
     var isLoadingMore = false
     var error: String?
@@ -41,7 +41,8 @@ final class HomeViewModel {
         defer { isLoading = false }
         async let feedTask: Void = loadFeed(generation: gen)
         async let playlistTask: Void = loadQuickPlaylists(generation: gen)
-        _ = await (feedTask, playlistTask)
+        async let historyTask: Void = loadHistory(generation: gen)
+        _ = await (feedTask, playlistTask, historyTask)
     }
 
     func reload() async {
@@ -50,6 +51,7 @@ final class HomeViewModel {
         isLoadingMore = false
         videos = []
         quickPlaylists = []
+        history = []
         continuationToken = nil
         await load()
     }
@@ -103,6 +105,18 @@ final class HomeViewModel {
         items.append(contentsOf: library.playlists)
         quickPlaylists = items
     }
+
+    private func loadHistory(generation: Int) async {
+        guard AuthState.shared.isSignedIn else { return }
+        do {
+            let videos = try await client.fetchHistoryVideos()
+            strixLog("loadHistory: \(videos.count)件")
+            guard generation == loadGeneration else { return }
+            history = videos
+        } catch {
+            strixLog("loadHistory エラー: \(error)")
+        }
+    }
 }
 
 // MARK: - View
@@ -110,7 +124,6 @@ final class HomeViewModel {
 struct HomeView: View {
     @State private var vm = HomeViewModel()
     @State private var path = NavigationPath()
-    @Query(sort: \WatchedVideo.watchedAt, order: .reverse) private var history: [WatchedVideo]
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -121,8 +134,8 @@ struct HomeView: View {
                         playlistQuickAccessSection
                     }
 
-                    // 視聴履歴（ある場合）
-                    if !history.isEmpty {
+                    // 視聴履歴（ログイン済みかつデータあり）
+                    if !vm.history.isEmpty {
                         historySection
                     }
 
@@ -197,8 +210,8 @@ struct HomeView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(history.prefix(10)) { video in
-                        Button { path.append(video.videoID) } label: {
+                    ForEach(vm.history.prefix(10)) { video in
+                        Button { path.append(video.videoId) } label: {
                             HistoryThumbnailView(video: video)
                         }
                         .buttonStyle(.plain)
@@ -310,14 +323,16 @@ private struct PlaylistCircleItem: View {
 // MARK: - 視聴履歴サムネイル
 
 private struct HistoryThumbnailView: View {
-    let video: WatchedVideo
+    let video: VideoItem
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            AsyncImage(url: URL(string: video.thumbnailURL)) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Color(.secondarySystemBackground)
+            LazyImage(url: video.thumbnailURL) { state in
+                if let image = state.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    Color(.secondarySystemBackground)
+                }
             }
             .frame(width: 120, height: 68)
             .clipShape(RoundedRectangle(cornerRadius: 6))
