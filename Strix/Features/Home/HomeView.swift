@@ -17,7 +17,9 @@ final class HomeViewModel {
     var videos: [VideoItem] = []
     var quickPlaylists: [YTPlaylist] = []
     var isLoading = false
+    var isLoadingMore = false
     var error: String?
+    var continuationToken: String?
 
     private let client: ContentClient
     private let accountClient: AccountClient
@@ -45,18 +47,47 @@ final class HomeViewModel {
     func reload() async {
         loadGeneration += 1  // 進行中のロードを世代で無効化
         isLoading = false
+        isLoadingMore = false
         videos = []
         quickPlaylists = []
+        continuationToken = nil
         await load()
     }
 
+    func loadMore() async {
+        guard let token = continuationToken, !isLoadingMore, !isLoading else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        // 動画が0件でも continuation token が続く場合があるためループして取得する
+        var currentToken: String? = token
+        while let t = currentToken {
+            do {
+                let (newVideos, nextToken) = try await client.fetchHomePage(t)
+                strixLog("loadMore 成功 \(newVideos.count)件")
+                videos.append(contentsOf: newVideos)
+                continuationToken = nextToken
+                if !newVideos.isEmpty { return }  // 取得できたので完了
+                currentToken = nextToken           // 0件なら次のページを試みる
+            } catch {
+                strixLog("loadMore エラー: \(error)")
+                return
+            }
+        }
+    }
+
     private func loadFeed(generation: Int) async {
+        strixLog("loadFeed 開始 gen=\(generation) current=\(loadGeneration)")
         do {
-            let result = try await client.fetchHome()
-            // 古い世代のタスクは結果を破棄する
-            guard generation == loadGeneration else { return }
+            let (result, token) = try await client.fetchHome()
+            strixLog("loadFeed 成功 \(result.count)件 gen=\(generation) current=\(loadGeneration)")
+            guard generation == loadGeneration else {
+                strixLog("loadFeed 破棄（世代不一致）")
+                return
+            }
             videos = result
+            continuationToken = token
         } catch {
+            strixLog("loadFeed エラー: \(error) gen=\(generation) current=\(loadGeneration) cancelled=\(Task.isCancelled)")
             guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
         }
@@ -118,7 +149,12 @@ struct HomeView: View {
             }
             .navigationTitle("Strix")
             .navigationBarTitleDisplayMode(.large)
-            .refreshable { await vm.reload() }
+            .refreshable {
+                // SwiftUI が refreshable タスクをキャンセルすると URLSession も -999 で失敗するため、
+                // 非構造化タスクで reload を実行してキャンセル伝播を切り離す
+                let task = Task { await vm.reload() }
+                await task.value
+            }
             .navigationDestination(for: String.self) { videoID in
                 PlayerView(videoID: videoID)
             }
@@ -187,6 +223,16 @@ struct HomeView: View {
                 .buttonStyle(.plain)
 
                 Divider()
+            }
+
+            // 末尾まで来たら次ページを自動読み込み
+            if vm.continuationToken != nil || vm.isLoadingMore {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    .onAppear {
+                        Task { await vm.loadMore() }
+                    }
             }
         }
     }

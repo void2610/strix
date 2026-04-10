@@ -12,7 +12,8 @@ import YouTubeKit
 /// ホームフィード・検索・関連動画を取得するクライアント。
 /// 戻り値は VideoItem に統一している。
 struct ContentClient {
-    var fetchHome: () async throws -> [VideoItem]
+    var fetchHome: () async throws -> ([VideoItem], String?)
+    var fetchHomePage: (String) async throws -> ([VideoItem], String?)
     var search: (String) async throws -> [VideoItem]
     var fetchRelated: (String) async throws -> [VideoItem]
 }
@@ -21,11 +22,12 @@ struct ContentClient {
 
 extension ContentClient {
     static func mock(
-        fetchHome: @escaping () async throws -> [VideoItem] = { [] },
+        fetchHome: @escaping () async throws -> ([VideoItem], String?) = { ([], nil) },
+        fetchHomePage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         fetchRelated: @escaping (String) async throws -> [VideoItem] = { _ in [] }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, search: search, fetchRelated: fetchRelated)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, search: search, fetchRelated: fetchRelated)
     }
 }
 
@@ -37,8 +39,13 @@ extension ContentClient {
         return ContentClient(
             fetchHome: {
                 let cookies = AuthState.shared.cookieString ?? ""
-                guard !cookies.isEmpty else { return [] }
+                guard !cookies.isEmpty else { return ([], nil) }
                 return try await ContentClient.fetchHomeViaInnertubeAPI(cookies: cookies)
+            },
+            fetchHomePage: { continuation in
+                let cookies = AuthState.shared.cookieString ?? ""
+                guard !cookies.isEmpty else { return ([], nil) }
+                return try await ContentClient.fetchHomeNextPageViaInnertubeAPI(cookies: cookies, continuation: continuation)
             },
             search: { query in
                 model.cookies = AuthState.shared.cookieString ?? ""
@@ -108,7 +115,7 @@ extension ContentClient {
     /// URLSession で Innertube /browse (WEB client) を叩いてホームフィードを取得する。
     /// 認証: Cookie ヘッダー直接設定 + SAPISIDHASH + X-Goog-AuthUser: 0
     /// cookies が空の場合は未ログイン状態でリクエストする。
-    private static func fetchHomeViaInnertubeAPI(cookies: String) async throws -> [VideoItem] {
+    private static func fetchHomeViaInnertubeAPI(cookies: String) async throws -> ([VideoItem], String?) {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -159,21 +166,114 @@ extension ContentClient {
         sessionConfig.httpShouldSetCookies = false
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
-        let (data, _) = try await session.data(for: request)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return []
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            strixLog("Innertube browse HTTP \(http.statusCode)")
         }
-        return findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            strixLog("Innertube browse JSON パース失敗")
+            return ([], nil)
+        }
+        let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
+        let nextToken = extractContinuationToken(in: json)
+        strixLog("Innertube browse \(videos.count)件 continuation=\(nextToken != nil)")
+        return (videos, nextToken)
+    }
+
+    /// Innertube /browse に continuation token を使って次ページを取得する。
+    private static func fetchHomeNextPageViaInnertubeAPI(cookies: String, continuation: String) async throws -> ([VideoItem], String?) {
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
+        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
+        if !cookies.isEmpty {
+            let deduped = deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
+        }
+
+        let visitorData = deduplicateCookies(cookies)
+            .components(separatedBy: "; ")
+            .first(where: { $0.hasPrefix("VISITOR_INFO1_LIVE=") })
+            .map { String($0.dropFirst("VISITOR_INFO1_LIVE=".count)) }
+
+        var clientContext: [String: Any] = [
+            "clientName": "WEB",
+            "clientVersion": "2.20241201.01.00",
+            "hl": "ja",
+            "gl": "JP"
+        ]
+        if let vd = visitorData, !vd.isEmpty {
+            clientContext["visitorData"] = vd
+        }
+
+        let body: [String: Any] = [
+            "continuation": continuation,
+            "context": ["client": clientContext]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            strixLog("Innertube browse continuation HTTP \(http.statusCode)")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            strixLog("Innertube browse continuation JSON パース失敗")
+            return ([], nil)
+        }
+        let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
+        let nextToken = extractContinuationToken(in: json)
+        strixLog("Innertube browse continuation \(videos.count)件 continuation=\(nextToken != nil)")
+        return (videos, nextToken)
+    }
+
+    /// JSON ツリーを再帰的に探索して continuation token を抽出する。
+    /// continuationCommand.token パスを探す。
+    private static func extractContinuationToken(in json: Any) -> String? {
+        if let dict = json as? [String: Any] {
+            if let cmd = dict["continuationCommand"] as? [String: Any],
+               let token = cmd["token"] as? String {
+                return token
+            }
+            for value in dict.values {
+                if let token = extractContinuationToken(in: value) { return token }
+            }
+        } else if let array = json as? [Any] {
+            for item in array {
+                if let token = extractContinuationToken(in: item) { return token }
+            }
+        }
+        return nil
     }
 
     /// JSON ツリーを再帰的に探索して動画 Renderer を全て抽出する。
-    /// WEB → videoRenderer / IOS 旧形式 → compactVideoRenderer
-    /// IOS 新形式 → elementRenderer 内の videoWithContextModel
+    /// WEB 旧形式 → videoRenderer / compactVideoRenderer
+    /// WEB 新形式 → lockupViewModel
+    /// IOS 旧形式 → compactVideoRenderer / elementRenderer 内の videoWithContextModel
+    /// IOS 新形式 → videoWithContextModel
     private static func findVideoRenderers(in json: Any) -> [[String: Any]] {
         if let dict = json as? [String: Any] {
-            // WEB 形式
+            // WEB 旧形式
             if let vr = dict["videoRenderer"] as? [String: Any] { return [vr] }
             if let vr = dict["compactVideoRenderer"] as? [String: Any] { return [vr] }
+            // WEB 新形式 (2024 年以降の主要フォーマット)
+            if let vr = dict["lockupViewModel"] as? [String: Any] { return [vr] }
             // IOS 新形式: videoWithContextModel が直接キーとして現れる場合
             if let vr = dict["videoWithContextModel"] as? [String: Any] { return [vr] }
             // IOS 旧形式: elementRenderer 内の決まったパス
@@ -200,10 +300,14 @@ extension ContentClient {
         return vcm
     }
 
-    /// videoRenderer / compactVideoRenderer / videoWithContextModel 一件から VideoItem を生成する。
-    /// videoWithContextModel は videoWithContextData キーを持つ新 IOS 形式。
+    /// videoRenderer / compactVideoRenderer / lockupViewModel / videoWithContextModel から VideoItem を生成する。
     private static func parseVideoRenderer(_ vr: [String: Any]) -> VideoItem? {
-        // ── 新 IOS 形式: videoWithContextModel ─────────────────────────────
+        // ── WEB 新形式: lockupViewModel ────────────────────────────────────
+        if vr["contentId"] != nil {
+            return parseLockupViewModel(vr)
+        }
+
+        // ── IOS 新形式: videoWithContextModel ─────────────────────────────
         if let vcData = vr["videoWithContextData"] as? [String: Any] {
             return parseVideoWithContextData(vcData)
         }
@@ -250,6 +354,52 @@ extension ContentClient {
             channelAvatarURL: avatarURL,
             viewCountText: viewCount,
             timePostedText: timePosted
+        )
+    }
+
+    /// WEB 新形式 lockupViewModel から VideoItem を生成する。
+    ///
+    /// 主要パス:
+    ///   videoId    : contentId
+    ///   title      : metadata.lockupMetadataViewModel.title.content
+    ///   thumbnail  : contentImage.thumbnailViewModel.image.sources[last].url
+    ///   channelName: metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[0]
+    ///   avatar     : metadata.lockupMetadataViewModel.image.sources[last].url
+    private static func parseLockupViewModel(_ lvm: [String: Any]) -> VideoItem? {
+        guard let videoId = lvm["contentId"] as? String else { return nil }
+
+        let lmvm = (lvm["metadata"] as? [String: Any])?["lockupMetadataViewModel"] as? [String: Any]
+
+        // タイトル
+        let title = (lmvm?["title"] as? [String: Any])?["content"] as? String ?? videoId
+
+        // サムネイル: contentImage.thumbnailViewModel.image.sources[last].url
+        let ciTvm = (lvm["contentImage"] as? [String: Any])?["thumbnailViewModel"] as? [String: Any]
+        let thumbSrcs = (ciTvm?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
+        let thumbnailURL = (thumbSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+
+        // チャンネル名: contentMetadataViewModel.metadataRows の先頭 title
+        var channelName: String?
+        if let cmvm = (lmvm?["metadata"] as? [String: Any])?["contentMetadataViewModel"] as? [String: Any],
+           let rows = cmvm["metadataRows"] as? [[String: Any]],
+           let firstRow = rows.first,
+           let rvm = firstRow["metadataRowViewModel"] as? [String: Any] {
+            channelName = (rvm["title"] as? [String: Any])?["content"] as? String
+                ?? (rvm["subTitle"] as? [String: Any])?["content"] as? String
+        }
+
+        // チャンネルアバター: metadata.lockupMetadataViewModel.image.sources[last].url
+        let avatarSrcs = (lmvm?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
+        let channelAvatarURL = (avatarSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+
+        return VideoItem(
+            videoId: videoId,
+            title: title,
+            channelName: channelName,
+            thumbnailURL: thumbnailURL,
+            channelAvatarURL: channelAvatarURL,
+            viewCountText: nil,
+            timePostedText: nil
         )
     }
 
