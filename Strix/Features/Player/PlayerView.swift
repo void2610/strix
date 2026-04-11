@@ -10,6 +10,7 @@ import AVFoundation
 import AVKit
 import UIKit
 import SwiftData
+import NukeUI
 
 @Observable
 final class PlayerViewModel {
@@ -283,16 +284,79 @@ struct PlayerView: View {
     // MARK: - タイトル・メタ情報
 
     private func videoMeta(info: VideoInfo) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
+            // タイトル
             Text(info.title)
                 .font(.headline)
                 .lineLimit(3)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
 
-            // チャンネル名は関連動画取得後に vm.relatedVideos の先頭から参照
-            // それまでは空表示
+            // チャンネル行（アバター + チャンネル名）
+            if let channelName = info.channelName {
+                channelRow(name: channelName, channelId: info.channelId)
+            }
+        }
+    }
+
+    /// 公式 YouTube 風のチャンネル行（アバター + 名前、タップでチャンネルページへ）
+    private func channelRow(name: String, channelId: String?) -> some View {
+        // アバターURL: VideoInfo → 関連動画の同一チャンネル → 関連動画の先頭
+        let avatarURL = vm.videoInfo?.channelAvatarURL
+            ?? vm.relatedVideos.first(where: { $0.channelId == channelId })?.channelAvatarURL
+            ?? vm.relatedVideos.first?.channelAvatarURL
+        let content = HStack(spacing: 10) {
+            Group {
+                if let url = avatarURL {
+                    LazyImage(url: url) { state in
+                        if let image = state.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            channelAvatarPlaceholder
+                        }
+                    }
+                } else {
+                    channelAvatarPlaceholder
+                }
+            }
+            .frame(width: 36, height: 36)
+            .clipShape(Circle())
+
+            Text(name)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .lineLimit(1)
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
+
+        return Group {
+            if let channelId {
+                NavigationLink(value: ChannelDestination(channelId: channelId)) {
+                    content
+                }
+                .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+    }
+
+    private var channelAvatarPlaceholder: some View {
+        Circle()
+            .fill(Color(.tertiarySystemBackground))
+            .overlay {
+                Image(systemName: "person.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.title3)
+            }
     }
 
     private var skeletonTitle: some View {

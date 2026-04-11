@@ -84,6 +84,9 @@ struct SearchView: View {
             .navigationDestination(for: String.self) { videoID in
                 PlayerView(videoID: videoID)
             }
+            .navigationDestination(for: ChannelDestination.self) { dest in
+                ChannelView(channelId: dest.channelId)
+            }
         }
     }
 

@@ -90,6 +90,9 @@ struct AccountView: View {
         .navigationDestination(for: String.self) { videoID in
             PlayerView(videoID: videoID)
         }
+        .navigationDestination(for: ChannelDestination.self) { dest in
+            ChannelView(channelId: dest.channelId)
+        }
         .refreshable { await vm.reload() }
         .sheet(isPresented: $showLog) { LogView() }
         .task { await vm.load() }

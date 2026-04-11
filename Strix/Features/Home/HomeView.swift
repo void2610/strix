@@ -153,6 +153,9 @@ struct HomeView: View {
             .navigationDestination(for: String.self) { videoID in
                 PlayerView(videoID: videoID)
             }
+            .navigationDestination(for: ChannelDestination.self) { dest in
+                ChannelView(channelId: dest.channelId)
+            }
         }
         .task(id: AuthState.shared.isSignedIn) {
             await vm.reload()

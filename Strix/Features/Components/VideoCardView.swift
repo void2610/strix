@@ -24,9 +24,19 @@ struct VideoCardView: View {
 
             // メタ情報行（アバター + タイトル・チャンネル名・視聴回数）
             HStack(alignment: .top, spacing: 12) {
-                channelAvatar
-                    .frame(width: 36, height: 36)
-                    .clipShape(Circle())
+                // チャンネルアバター（タップでチャンネルページへ）
+                if let channelId = video.channelId {
+                    NavigationLink(value: ChannelDestination(channelId: channelId)) {
+                        channelAvatar
+                            .frame(width: 36, height: 36)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    channelAvatar
+                        .frame(width: 36, height: 36)
+                        .clipShape(Circle())
+                }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(video.title)
@@ -35,9 +45,19 @@ struct VideoCardView: View {
                         .lineLimit(2)
                         .foregroundStyle(.primary)
 
-                    metaText
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // チャンネル名（タップでチャンネルページへ）
+                    if let channelId = video.channelId {
+                        NavigationLink(value: ChannelDestination(channelId: channelId)) {
+                            metaText
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        metaText
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.horizontal, 12)

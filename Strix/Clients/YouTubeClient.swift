@@ -17,6 +17,9 @@ struct VideoInfo {
     let streamURL: URL
     let title: String
     let thumbnailURL: String
+    let channelId: String?
+    let channelName: String?
+    let channelAvatarURL: URL?
 }
 
 enum YouTubeClientError: LocalizedError {
@@ -102,6 +105,26 @@ extension YouTubeClient {
             let title = videoDetails?["title"] as? String ?? videoID
             let thumbnails = (videoDetails?["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
             let thumbnailURL = thumbnails?.last?["url"] as? String ?? ""
+            let channelId = videoDetails?["channelId"] as? String
+            let channelName = videoDetails?["author"] as? String
+
+            // チャンネルアバター: endscreen のチャンネル要素 → レスポンス全体から yt3.ggpht.com URL を探索
+            var channelAvatarURL: URL? = nil
+            if let endscreen = (json["endscreen"] as? [String: Any])?["endscreenRenderer"] as? [String: Any],
+               let elements = endscreen["elements"] as? [[String: Any]] {
+                for element in elements {
+                    if let renderer = element["endscreenElementRenderer"] as? [String: Any],
+                       renderer["style"] as? String == "CHANNEL",
+                       let thumbs = (renderer["image"] as? [String: Any])?["thumbnails"] as? [[String: Any]] {
+                        channelAvatarURL = ContentClient.imageURL(from: thumbs.last?["url"] as? String)
+                        break
+                    }
+                }
+            }
+            // endscreen から取得できなかった場合、レスポンス全体から探索
+            if channelAvatarURL == nil {
+                channelAvatarURL = ContentClient.findAvatarURL(in: json)
+            }
 
             // HLS manifest URL（iOS クライアントは通常動画でもこれを返す）
             let streamingData = json["streamingData"] as? [String: Any]
@@ -110,7 +133,7 @@ extension YouTubeClient {
                 throw YouTubeClientError.streamNotFound
             }
 
-            return VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL)
+            return VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: channelAvatarURL)
         }
     )
 }

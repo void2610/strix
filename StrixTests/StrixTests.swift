@@ -46,7 +46,20 @@ struct ContentClientParsingTests {
                             "metadataRows": [
                                 [
                                     "metadataRowViewModel": [
-                                        "title": ["content": channelName]
+                                        "title": [
+                                            "content": channelName,
+                                            "commandRuns": [
+                                                [
+                                                    "onTap": [
+                                                        "innertubeCommand": [
+                                                            "browseEndpoint": [
+                                                                "browseId": "UCtest123"
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
                                     ]
                                 ]
                             ]
@@ -299,6 +312,7 @@ struct HistoryViewModelTests {
             let mockVideo = VideoItem(
                 videoId: "hist1",
                 title: "履歴テスト動画",
+                channelId: nil,
                 channelName: "チャンネル",
                 thumbnailURL: nil,
                 channelAvatarURL: nil,
@@ -348,6 +362,7 @@ struct PlaylistDetailViewModelTests {
         let mockVideo = VideoItem(
             videoId: "playlist1",
             title: "プレイリスト動画",
+            channelId: nil,
             channelName: "チャンネル",
             thumbnailURL: nil,
             channelAvatarURL: nil,
@@ -375,6 +390,48 @@ struct PlaylistDetailViewModelTests {
         await vm.load(playlistId: "VLLL")
 
         #expect(vm.videos.isEmpty)
+        #expect(vm.error != nil)
+        #expect(!vm.isLoading)
+    }
+}
+
+// MARK: - ChannelViewModel ユニットテスト
+
+@MainActor
+struct ChannelViewModelTests {
+
+    @Test func loadPopulatesChannelInfo() async {
+        let mockInfo = ChannelInfo(
+            channelId: "UC123",
+            name: "テストチャンネル",
+            handle: "@test",
+            subscriberCount: "1万人",
+            videoCount: "100本",
+            avatarURL: nil,
+            bannerURL: nil,
+            videos: [
+                VideoItem(videoId: "v1", title: "動画1", channelId: "UC123", channelName: "テストチャンネル", thumbnailURL: nil, channelAvatarURL: nil, viewCountText: nil, timePostedText: nil)
+            ]
+        )
+        let client = ContentClient.mock(fetchChannel: { _ in mockInfo })
+        let vm = ChannelViewModel(contentClient: client)
+
+        await vm.load(channelId: "UC123")
+
+        #expect(vm.channelInfo?.name == "テストチャンネル")
+        #expect(vm.channelInfo?.handle == "@test")
+        #expect(vm.channelInfo?.videos.count == 1)
+        #expect(!vm.isLoading)
+        #expect(vm.error == nil)
+    }
+
+    @Test func loadHandlesError() async {
+        let client = ContentClient.mock(fetchChannel: { _ in throw URLError(.notConnectedToInternet) })
+        let vm = ChannelViewModel(contentClient: client)
+
+        await vm.load(channelId: "UC123")
+
+        #expect(vm.channelInfo == nil)
         #expect(vm.error != nil)
         #expect(!vm.isLoading)
     }
@@ -643,7 +700,7 @@ struct PlayerViewModelTests {
     @Test func loadSetsVideoInfoOnSuccess() async throws {
         let dummyURL = URL(string: "https://example.com/test.m3u8")!
         let youtubeClient = YouTubeClient(fetchVideo: { _ in
-            VideoInfo(streamURL: dummyURL, title: "テスト動画", thumbnailURL: "https://example.com/thumb.jpg")
+            VideoInfo(streamURL: dummyURL, title: "テスト動画", thumbnailURL: "https://example.com/thumb.jpg", channelId: nil, channelName: nil, channelAvatarURL: nil)
         })
         let vm = PlayerViewModel(youtubeClient: youtubeClient, contentClient: .mock())
         let ctx = try makeInMemoryContext()
@@ -658,7 +715,7 @@ struct PlayerViewModelTests {
     @Test func loadSavesVideoToHistory() async throws {
         let dummyURL = URL(string: "https://example.com/test.m3u8")!
         let youtubeClient = YouTubeClient(fetchVideo: { _ in
-            VideoInfo(streamURL: dummyURL, title: "履歴テスト", thumbnailURL: "https://example.com/t.jpg")
+            VideoInfo(streamURL: dummyURL, title: "履歴テスト", thumbnailURL: "https://example.com/t.jpg", channelId: nil, channelName: nil, channelAvatarURL: nil)
         })
         let vm = PlayerViewModel(youtubeClient: youtubeClient, contentClient: .mock())
         let ctx = try makeInMemoryContext()

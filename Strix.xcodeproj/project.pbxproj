@@ -63,6 +63,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AE2D03102F854158000BCA31 /* Exceptions for "Strix" folder in "Strix" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AE2D02DE2F854157000BCA31 /* Strix */;
+		};
 		AE9B60A52F866F1C000B938F /* Exceptions for "StrixWidgetExtension" folder in "StrixWidgetExtensionExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -77,14 +84,7 @@
 			);
 			target = AE9B608D2F866F1B000B938F /* StrixWidgetExtensionExtension */;
 		};
-		AE2D03102F854158000BCA31 /* Exceptions for "Strix" folder in "Strix" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = AE2D02DE2F854157000BCA31 /* Strix */;
-		};
-		/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AE2D02E12F854157000BCA31 /* Strix */ = {

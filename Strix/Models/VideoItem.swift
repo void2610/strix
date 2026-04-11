@@ -16,6 +16,7 @@ struct VideoItem: Identifiable {
     var id: String { videoId }
     let videoId: String
     let title: String
+    let channelId: String?
     let channelName: String?
     let thumbnailURL: URL?
     let channelAvatarURL: URL?
@@ -32,6 +33,7 @@ extension YTVideo {
         return VideoItem(
             videoId: videoId,
             title: title ?? videoId,
+            channelId: channel?.channelId,
             channelName: channel?.name,
             thumbnailURL: thumbnails.last?.url,
             channelAvatarURL: channel?.thumbnails.last?.url,

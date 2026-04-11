@@ -9,6 +9,18 @@ import Foundation
 import CryptoKit
 import YouTubeKit
 
+/// チャンネル情報モデル
+struct ChannelInfo {
+    let channelId: String
+    let name: String?
+    let handle: String?
+    let subscriberCount: String?
+    let videoCount: String?
+    let avatarURL: URL?
+    let bannerURL: URL?
+    let videos: [VideoItem]
+}
+
 /// ホームフィード・検索・関連動画を取得するクライアント。
 /// 戻り値は VideoItem に統一している。
 struct ContentClient {
@@ -18,6 +30,7 @@ struct ContentClient {
     var fetchPlaylistVideos: (String) async throws -> [VideoItem]
     var search: (String) async throws -> [VideoItem]
     var fetchRelated: (String) async throws -> [VideoItem]
+    var fetchChannel: (String) async throws -> ChannelInfo
 }
 
 // MARK: - モック（テスト用）
@@ -29,9 +42,10 @@ extension ContentClient {
         fetchHistoryVideos: @escaping () async throws -> [VideoItem] = { [] },
         fetchPlaylistVideos: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
-        fetchRelated: @escaping (String) async throws -> [VideoItem] = { _ in [] }
+        fetchRelated: @escaping (String) async throws -> [VideoItem] = { _ in [] },
+        fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil, videos: []) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel)
     }
 }
 
@@ -103,9 +117,211 @@ extension ContentClient {
                 return (response?.recommendedVideos ?? [])
                     .compactMap { $0 as? YTVideo }
                     .map { $0.toVideoItem }
+            },
+            fetchChannel: { channelId in
+                let cookies = AuthState.shared.cookieString ?? ""
+                return try await ContentClient.fetchChannelViaInnertube(channelId: channelId, cookies: cookies)
             }
         )
     }()
+}
+
+// MARK: - チャンネル情報取得
+
+extension ContentClient {
+
+    /// Innertube /browse でチャンネル情報と動画一覧を取得する。
+    private static func fetchChannelViaInnertube(channelId: String, cookies: String) async throws -> ChannelInfo {
+        let (videos, _) = try await fetchBrowseViaInnertubeAPI(browseId: channelId, cookies: cookies)
+
+        // チャンネルヘッダー情報を別途取得（/browse レスポンスのヘッダー部分）
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
+        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
+        if !cookies.isEmpty {
+            let deduped = deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
+        }
+        let body: [String: Any] = [
+            "browseId": channelId,
+            "context": ["client": [
+                "clientName": "WEB",
+                "clientVersion": "2.20241201.01.00",
+                "hl": "ja",
+                "gl": "JP"
+            ]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (data, _) = try await session.data(for: request)
+        let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+
+        // ヘッダー情報をパース（c4TabbedHeaderRenderer または pageHeaderRenderer）
+        let header = json["header"] as? [String: Any]
+        let c4 = header?["c4TabbedHeaderRenderer"] as? [String: Any]
+        let pageHeader = (header?["pageHeaderRenderer"] as? [String: Any])
+        let pageHeaderContent = (pageHeader?["content"] as? [String: Any])?["pageHeaderViewModel"] as? [String: Any]
+
+        // チャンネル名
+        let name = c4?["title"] as? String
+            ?? extractTextFromPageHeader(pageHeaderContent, key: "title")
+
+        // ハンドル
+        let handle = (c4?["channelHandleText"] as? [String: Any])?["runs"] as? [[String: Any]]
+        let handleText = handle?.compactMap({ $0["text"] as? String }).joined()
+            ?? extractTextFromPageHeader(pageHeaderContent, key: "subtitle")
+
+        // 登録者数
+        let subscriberCount = (c4?["subscriberCountText"] as? [String: Any])?["simpleText"] as? String
+            ?? extractMetadataFromPageHeader(pageHeaderContent, index: 0)
+
+        // 動画数
+        let videoCount = (c4?["videosCountText"] as? [String: Any])?["runs"] as? [[String: Any]]
+        let videoCountText = videoCount?.compactMap({ $0["text"] as? String }).joined()
+            ?? extractMetadataFromPageHeader(pageHeaderContent, index: 1)
+
+        // アバター
+        let avatarThumbs = (c4?["avatar"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+        let pageAvatarImage = (pageHeaderContent?["image"] as? [String: Any])?["decoratedAvatarViewModel"] as? [String: Any]
+        let pageAvatarSources = ((pageAvatarImage?["avatar"] as? [String: Any])?["avatarViewModel"] as? [String: Any])?["image"] as? [String: Any]
+        let avatarSources = avatarThumbs ?? (pageAvatarSources?["sources"] as? [[String: Any]])
+        let avatarURL = ContentClient.imageURL(from: avatarSources?.last?["url"] as? String)
+
+        // バナー
+        let bannerThumbs = (c4?["banner"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+        let pageBanner = (pageHeaderContent?["banner"] as? [String: Any])?["imageBannerViewModel"] as? [String: Any]
+        let pageBannerSources = (pageBanner?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
+        let bannerSources = bannerThumbs ?? pageBannerSources
+        let bannerURL = ContentClient.imageURL(from: bannerSources?.last?["url"] as? String)
+
+        return ChannelInfo(
+            channelId: channelId,
+            name: name,
+            handle: handleText,
+            subscriberCount: subscriberCount,
+            videoCount: videoCountText,
+            avatarURL: avatarURL,
+            bannerURL: bannerURL,
+            videos: videos
+        )
+    }
+
+    /// pageHeaderViewModel からテキストを抽出するヘルパー
+    private static func extractTextFromPageHeader(_ pageHeader: [String: Any]?, key: String) -> String? {
+        guard let ph = pageHeader else { return nil }
+        if let titleVM = (ph[key] as? [String: Any])?["dynamicTextViewModel"] as? [String: Any] {
+            return (titleVM["text"] as? [String: Any])?["content"] as? String
+        }
+        return (ph[key] as? [String: Any])?["content"] as? String
+    }
+
+    /// pageHeaderViewModel の metadata からインデックス指定でテキストを取得するヘルパー
+    private static func extractMetadataFromPageHeader(_ pageHeader: [String: Any]?, index: Int) -> String? {
+        guard let ph = pageHeader,
+              let metadata = (ph["metadata"] as? [String: Any])?["contentMetadataViewModel"] as? [String: Any],
+              let rows = metadata["metadataRows"] as? [[String: Any]],
+              index < rows.count,
+              let parts = rows[index]["metadataParts"] as? [[String: Any]],
+              let firstPart = parts.first,
+              let text = (firstPart["text"] as? [String: Any])?["content"] as? String
+        else { return nil }
+        return text
+    }
+}
+
+// MARK: - URL ヘルパー
+
+extension ContentClient {
+
+    /// YouTube のプロトコル相対 URL（`//` 始まり）を `https:` 付きに補正して URL を生成する。
+    static func imageURL(from string: String?) -> URL? {
+        guard var s = string, !s.isEmpty else { return nil }
+        if s.hasPrefix("//") { s = "https:" + s }
+        return URL(string: s)
+    }
+
+    /// JSON ツリー内から UC 始まりの browseId（チャンネルID）と隣接するテキスト（チャンネル名）を探索する。
+    static func extractChannelInfo(from json: Any) -> (name: String?, id: String?) {
+        var channelName: String?
+        var channelId: String?
+        findChannelBrowseEndpoints(in: json, name: &channelName, id: &channelId)
+        return (channelName, channelId)
+    }
+
+    /// browseEndpoint.browseId が UC 始まりのものを探し、対応するテキストをチャンネル名として返す。
+    private static func findChannelBrowseEndpoints(in json: Any, name: inout String?, id: inout String?) {
+        guard id == nil else { return }
+        if let dict = json as? [String: Any] {
+            // "content" + "commandRuns" パターン: テキストとチャンネルリンクが同じオブジェクト内にある
+            if let content = dict["content"] as? String,
+               let cmdRuns = dict["commandRuns"] as? [[String: Any]] {
+                for cmdRun in cmdRuns {
+                    if let browse = ((cmdRun["onTap"] as? [String: Any])?["innertubeCommand"] as? [String: Any])?["browseEndpoint"] as? [String: Any],
+                       let bid = browse["browseId"] as? String, bid.hasPrefix("UC") {
+                        name = content
+                        id = bid
+                        return
+                    }
+                }
+            }
+            // "runs" パターン: runs 配列内にテキストとナビゲーションがある
+            if let runs = dict["runs"] as? [[String: Any]] {
+                for run in runs {
+                    if let text = run["text"] as? String,
+                       let browse = (run["navigationEndpoint"] as? [String: Any])?["browseEndpoint"] as? [String: Any],
+                       let bid = browse["browseId"] as? String, bid.hasPrefix("UC") {
+                        name = text
+                        id = bid
+                        return
+                    }
+                }
+            }
+            for (_, value) in dict {
+                findChannelBrowseEndpoints(in: value, name: &name, id: &id)
+                if id != nil { return }
+            }
+        } else if let array = json as? [Any] {
+            for item in array {
+                findChannelBrowseEndpoints(in: item, name: &name, id: &id)
+                if id != nil { return }
+            }
+        }
+    }
+
+    /// JSON ツリー内から yt3.ggpht.com を含むアバター URL を再帰的に探索する。
+    static func findAvatarURL(in json: Any) -> URL? {
+        if let dict = json as? [String: Any] {
+            // "url" キーに yt3.ggpht.com が含まれていればアバター
+            if let urlStr = dict["url"] as? String, urlStr.contains("yt3.ggpht.com") {
+                return imageURL(from: urlStr)
+            }
+            for (_, value) in dict {
+                if let url = findAvatarURL(in: value) { return url }
+            }
+        } else if let array = json as? [Any] {
+            for item in array {
+                if let url = findAvatarURL(in: item) { return url }
+            }
+        }
+        return nil
+    }
 }
 
 // MARK: - Innertube browse API によるホームフィード取得
@@ -362,23 +578,21 @@ extension ContentClient {
 
         // サムネイル
         let thumbs = (vr["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
-        let thumbURL = (thumbs?.last?["url"] as? String).flatMap { URL(string: $0) }
+        let thumbURL = ContentClient.imageURL(from: thumbs?.last?["url"] as? String)
 
-        // チャンネル名: videoRenderer → ownerText / compactVideoRenderer → longBylineText
-        let channelName =
-            ((vr["ownerText"] as? [String: Any])?["runs"] as? [[String: Any]])?
-                .first?["text"] as? String
-            ?? ((vr["longBylineText"] as? [String: Any])?["runs"] as? [[String: Any]])?
-                .first?["text"] as? String
-            ?? ((vr["shortBylineText"] as? [String: Any])?["runs"] as? [[String: Any]])?
-                .first?["text"] as? String
+        // チャンネル名・チャンネルID: ownerText / longBylineText / shortBylineText
+        let ownerRuns = ((vr["ownerText"] as? [String: Any])?["runs"] as? [[String: Any]])
+            ?? ((vr["longBylineText"] as? [String: Any])?["runs"] as? [[String: Any]])
+            ?? ((vr["shortBylineText"] as? [String: Any])?["runs"] as? [[String: Any]])
+        let channelName = ownerRuns?.first?["text"] as? String
+        let channelId = ((ownerRuns?.first?["navigationEndpoint"] as? [String: Any])?["browseEndpoint"] as? [String: Any])?["browseId"] as? String
 
         // チャンネルアバター
         let chThumb = vr["channelThumbnailSupportedRenderers"] as? [String: Any]
         let chThumbLink = chThumb?["channelThumbnailWithLinkRenderer"] as? [String: Any]
         let chThumbObj = chThumbLink?["thumbnail"] as? [String: Any]
         let chThumbs = chThumbObj?["thumbnails"] as? [[String: Any]]
-        let avatarURL = (chThumbs?.last?["url"] as? String).flatMap { URL(string: $0) }
+        let avatarURL = ContentClient.imageURL(from: chThumbs?.last?["url"] as? String)
 
         // 視聴回数・投稿日時
         let videoInfoRuns = (vr["videoInfo"] as? [String: Any])?["runs"] as? [[String: Any]]
@@ -390,6 +604,7 @@ extension ContentClient {
         return VideoItem(
             videoId: videoId,
             title: title,
+            channelId: channelId,
             channelName: channelName,
             thumbnailURL: thumbURL,
             channelAvatarURL: avatarURL,
@@ -417,25 +632,45 @@ extension ContentClient {
         // サムネイル: contentImage.thumbnailViewModel.image.sources[last].url
         let ciTvm = (lvm["contentImage"] as? [String: Any])?["thumbnailViewModel"] as? [String: Any]
         let thumbSrcs = (ciTvm?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
-        let thumbnailURL = (thumbSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+        let thumbnailURL = ContentClient.imageURL(from: thumbSrcs?.last?["url"] as? String)
 
-        // チャンネル名: contentMetadataViewModel.metadataRows の先頭 title
-        var channelName: String?
-        if let cmvm = (lmvm?["metadata"] as? [String: Any])?["contentMetadataViewModel"] as? [String: Any],
-           let rows = cmvm["metadataRows"] as? [[String: Any]],
-           let firstRow = rows.first,
-           let rvm = firstRow["metadataRowViewModel"] as? [String: Any] {
-            channelName = (rvm["title"] as? [String: Any])?["content"] as? String
-                ?? (rvm["subTitle"] as? [String: Any])?["content"] as? String
-        }
+        // チャンネル名・チャンネルID: lockupMetadataViewModel 内を再帰探索
+        let (channelName, channelId) = extractChannelInfo(from: lmvm as Any)
 
-        // チャンネルアバター: metadata.lockupMetadataViewModel.image.sources[last].url
+        // チャンネルアバター: 複数パスから探索
+        // 1. lockupMetadataViewModel.image.sources（直接アバター）
+        // 2. metadataRows 内の avatarViewModel.image.sources
+        // 3. metadataRows 内の image.sources
+        var channelAvatarURL: URL? = nil
+        // パス1
         let avatarSrcs = (lmvm?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
-        let channelAvatarURL = (avatarSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+        channelAvatarURL = ContentClient.imageURL(from: avatarSrcs?.last?["url"] as? String)
+        // パス2: metadataRows 内を深く探索
+        if channelAvatarURL == nil, let cmvm = (lmvm?["metadata"] as? [String: Any])?["contentMetadataViewModel"] as? [String: Any],
+           let rows = cmvm["metadataRows"] as? [[String: Any]] {
+            for row in rows {
+                if let rvm = row["metadataRowViewModel"] as? [String: Any] {
+                    // avatarViewModel パス
+                    if let avatarVM = rvm["image"] as? [String: Any] {
+                        let sources = (avatarVM["image"] as? [String: Any])?["sources"] as? [[String: Any]]
+                            ?? avatarVM["sources"] as? [[String: Any]]
+                        if let url = ContentClient.imageURL(from: sources?.last?["url"] as? String) {
+                            channelAvatarURL = url
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        // パス3: lockupMetadataViewModel 内を再帰探索（yt3.ggpht.com）
+        if channelAvatarURL == nil {
+            channelAvatarURL = findAvatarURL(in: lmvm as Any)
+        }
 
         return VideoItem(
             videoId: videoId,
             title: title,
+            channelId: channelId,
             channelName: channelName,
             thumbnailURL: thumbnailURL,
             channelAvatarURL: channelAvatarURL,
@@ -472,12 +707,16 @@ extension ContentClient {
         // サムネイル: videoData.thumbnail.image.sources[last].url
         let thumbImage  = (videoData?["thumbnail"] as? [String: Any])?["image"] as? [String: Any]
         let thumbSrcs   = thumbImage?["sources"] as? [[String: Any]]
-        let thumbURL    = (thumbSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+        let thumbURL    = ContentClient.imageURL(from: thumbSrcs?.last?["url"] as? String)
 
         // チャンネルアバター: channelThumbnail.image.sources[last].url
         let chThumbImg  = (data["channelThumbnail"] as? [String: Any])?["image"] as? [String: Any]
         let chThumbSrcs = chThumbImg?["sources"] as? [[String: Any]]
-        let avatarURL   = (chThumbSrcs?.last?["url"] as? String).flatMap { URL(string: $0) }
+        let avatarURL   = ContentClient.imageURL(from: chThumbSrcs?.last?["url"] as? String)
+
+        // チャンネルID
+        let channelId = metadata?["channelId"] as? String
+            ?? ((onTap?["innertubeCommand"] as? [String: Any])?["watchEndpoint"] as? [String: Any])?["channelId"] as? String
 
         // 視聴回数・投稿日時
         let viewCount   = metadata?["shortViewCountText"] as? String
@@ -486,6 +725,7 @@ extension ContentClient {
         return VideoItem(
             videoId: videoId,
             title: title,
+            channelId: channelId,
             channelName: channelName,
             thumbnailURL: thumbURL,
             channelAvatarURL: avatarURL,
