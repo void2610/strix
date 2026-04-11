@@ -122,6 +122,21 @@ struct ContentClientParsingTests {
         #expect(found.first?["videoId"] as? String == "vid1")
     }
 
+    @Test func findVideoRenderersFindsPlaylistVideoRenderer() {
+        let json: [String: Any] = [
+            "contents": [
+                ["playlistVideoRenderer": [
+                    "videoId": "plist1",
+                    "title": ["runs": [["text": "プレイリスト動画"]]],
+                    "thumbnail": ["thumbnails": [["url": "https://example.com/thumb.jpg"]]]
+                ]]
+            ]
+        ]
+        let found = ContentClient.findVideoRenderers(in: json)
+        #expect(found.count == 1)
+        #expect(found.first?["videoId"] as? String == "plist1")
+    }
+
     @Test func findVideoRenderersFindsMultipleItems() {
         let json: [String: Any] = [
             "contents": [
@@ -195,6 +210,22 @@ struct ContentClientParsingTests {
         #expect(item?.videoId == "vr123")
         #expect(item?.title == "videoRenderer タイトル")
     }
+
+    @Test func parseVideoRendererHandlesPlaylistVideoRenderer() {
+        let json: [String: Any] = [
+            "videoId": "pl123",
+            "title": ["runs": [["text": "playlistVideoRenderer タイトル"]]],
+            "thumbnail": ["thumbnails": [["url": "https://example.com/p.jpg"]]],
+            "shortBylineText": ["runs": [["text": "プレイリストチャンネル"]]],
+            "videoInfo": ["runs": [["text": "123万回視聴"], ["text": " • "], ["text": "1年前"]]]
+        ]
+        let item = ContentClient.parseVideoRenderer(json)
+        #expect(item?.videoId == "pl123")
+        #expect(item?.title == "playlistVideoRenderer タイトル")
+        #expect(item?.channelName == "プレイリストチャンネル")
+        #expect(item?.viewCountText == "123万回視聴")
+        #expect(item?.timePostedText == "1年前")
+    }
 }
 
 // MARK: - HistoryViewModel ユニットテスト
@@ -250,6 +281,47 @@ struct HistoryViewModelTests {
     @Test func loadSetsLoadingFalseAfterCompletion() async {
         let vm = HistoryViewModel(contentClient: .mock())
         await vm.load()
+        #expect(!vm.isLoading)
+    }
+}
+
+// MARK: - PlaylistDetailViewModel ユニットテスト
+
+@MainActor
+struct PlaylistDetailViewModelTests {
+
+    @Test func loadPopulatesVideos() async {
+        let mockVideo = VideoItem(
+            videoId: "playlist1",
+            title: "プレイリスト動画",
+            channelName: "チャンネル",
+            thumbnailURL: nil,
+            channelAvatarURL: nil,
+            viewCountText: nil,
+            timePostedText: nil
+        )
+        let accountClient = AccountClient.mock(
+            fetchPlaylistVideos: { _ in [mockVideo] }
+        )
+        let vm = PlaylistDetailViewModel(accountClient: accountClient)
+
+        await vm.load(playlistId: "VLWL")
+
+        #expect(vm.videos.count == 1)
+        #expect(vm.videos.first?.videoId == "playlist1")
+        #expect(!vm.isLoading)
+    }
+
+    @Test func loadHandlesError() async {
+        let accountClient = AccountClient.mock(
+            fetchPlaylistVideos: { _ in throw URLError(.notConnectedToInternet) }
+        )
+        let vm = PlaylistDetailViewModel(accountClient: accountClient)
+
+        await vm.load(playlistId: "VLLL")
+
+        #expect(vm.videos.isEmpty)
+        #expect(vm.error != nil)
         #expect(!vm.isLoading)
     }
 }

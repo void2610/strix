@@ -54,7 +54,9 @@ struct PlaylistDetailView: View {
             } else {
                 List {
                     ForEach(vm.videos) { video in
-                        NavigationLink(value: video.videoId) {
+                        NavigationLink {
+                            PlayerView(videoID: video.videoId)
+                        } label: {
                             VideoRowView(video: video)
                         }
                         .buttonStyle(.plain)

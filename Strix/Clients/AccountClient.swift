@@ -83,9 +83,22 @@ extension AccountClient {
                     data: [.browseId: playlistId]
                 )
                 if let error { throw error }
-                return (response?.results ?? [])
+                guard var response else {
+                    return try await ContentClient.live.fetchPlaylistVideos(playlistId)
+                }
+
+                while response.continuationToken != nil {
+                    let (continuation, continuationError) = await response.fetchContinuation(youtubeModel: model)
+                    if let continuationError { throw continuationError }
+                    guard let continuation else { break }
+                    response.mergeWithContinuation(continuation)
+                }
+
+                let videos = response.results
                     .compactMap { $0 as? YTVideo }
                     .map { $0.toVideoItem }
+                if !videos.isEmpty { return videos }
+                return try await ContentClient.live.fetchPlaylistVideos(playlistId)
             }
         )
     }()
