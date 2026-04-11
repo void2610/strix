@@ -99,7 +99,13 @@ extension ContentClient {
             fetchPlaylistVideos: { playlistId in
                 let cookies = AuthState.shared.cookieString ?? ""
                 guard !cookies.isEmpty else { return [] }
-                // VLプレフィックス付き・なし両方を試す
+
+                // ミックスリスト（RD始まり）は /next エンドポイントで取得
+                if playlistId.hasPrefix("RD") {
+                    return try await ContentClient.fetchMixViaNextAPI(playlistId: playlistId, cookies: cookies)
+                }
+
+                // 通常プレイリスト: VLプレフィックス付き・なし両方を試す
                 let candidateBrowseIds: [String] = {
                     if playlistId.hasPrefix("VL"), playlistId.count > 2 {
                         return [playlistId, String(playlistId.dropFirst(2))]
@@ -119,7 +125,9 @@ extension ContentClient {
                         continuation = nextToken
                     }
                 }
-                return []
+
+                // /browse で取れなかった場合も /next にフォールバック
+                return try await ContentClient.fetchMixViaNextAPI(playlistId: playlistId, cookies: cookies)
             },
             search: { query in
                 model.cookies = AuthState.shared.cookieString ?? ""
@@ -276,6 +284,81 @@ extension ContentClient {
     }
 
     /// JSON ツリーから lockupViewModel (PLAYLIST/ALBUM) をパースしてプレイリスト一覧を返す。
+    /// /next エンドポイントでミックスリスト・プレイリストの動画一覧を取得する。
+    /// playlistPanelVideoRenderer をパースする。
+    static func fetchMixViaNextAPI(playlistId: String, cookies: String) async throws -> [VideoItem] {
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/next?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
+        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
+        if !cookies.isEmpty {
+            let deduped = deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
+        }
+        let body: [String: Any] = [
+            "playlistId": playlistId,
+            "context": ["client": [
+                "clientName": "WEB",
+                "clientVersion": "2.20241201.01.00",
+                "hl": "ja",
+                "gl": "JP"
+            ]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (data, _) = try await session.data(for: request)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+
+        // playlistPanelVideoRenderer を再帰的に探索
+        return parsePlaylistPanelRenderers(from: json)
+    }
+
+    /// playlistPanelVideoRenderer から VideoItem の配列をパースする。
+    static func parsePlaylistPanelRenderers(from json: Any) -> [VideoItem] {
+        var renderers: [[String: Any]] = []
+        findPlaylistPanelRenderers(in: json, results: &renderers)
+        return renderers.compactMap { renderer -> VideoItem? in
+            guard let videoId = renderer["videoId"] as? String else { return nil }
+            let title = (renderer["title"] as? [String: Any])?["simpleText"] as? String
+                ?? ((renderer["title"] as? [String: Any])?["runs"] as? [[String: Any]])?.compactMap({ $0["text"] as? String }).joined()
+                ?? videoId
+            let thumbs = (renderer["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+            let thumbURL = imageURL(from: thumbs?.last?["url"] as? String)
+            let channelName = ((renderer["longBylineText"] as? [String: Any])?["runs"] as? [[String: Any]])?.first?["text"] as? String
+                ?? ((renderer["shortBylineText"] as? [String: Any])?["runs"] as? [[String: Any]])?.first?["text"] as? String
+            return VideoItem(videoId: videoId, title: title, channelName: channelName, thumbnailURL: thumbURL)
+        }
+    }
+
+    private static func findPlaylistPanelRenderers(in json: Any, results: inout [[String: Any]]) {
+        if let dict = json as? [String: Any] {
+            if let r = dict["playlistPanelVideoRenderer"] as? [String: Any] {
+                results.append(r)
+            } else {
+                for (_, v) in dict { findPlaylistPanelRenderers(in: v, results: &results) }
+            }
+        } else if let array = json as? [Any] {
+            for item in array { findPlaylistPanelRenderers(in: item, results: &results) }
+        }
+    }
+
     static func parsePlaylistLockups(from json: Any) -> [ChannelPlaylistItem] {
         var items: [ChannelPlaylistItem] = []
         findLockups(in: json, items: &items)
@@ -727,16 +810,21 @@ extension ContentClient {
     ///   channelName: metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[0]
     ///   avatar     : metadata.lockupMetadataViewModel.image.sources[last].url
     static func parseLockupViewModel(_ lvm: [String: Any]) -> VideoItem? {
-        guard let videoId = lvm["contentId"] as? String else { return nil }
+        guard let contentId = lvm["contentId"] as? String else { return nil }
+        let contentType = lvm["contentType"] as? String ?? ""
+        let isPlaylist = contentType.contains("PLAYLIST") || contentType.contains("MIX")
 
         let lmvm = (lvm["metadata"] as? [String: Any])?["lockupMetadataViewModel"] as? [String: Any]
 
         // タイトル
-        let title = (lmvm?["title"] as? [String: Any])?["content"] as? String ?? videoId
+        let title = (lmvm?["title"] as? [String: Any])?["content"] as? String ?? contentId
 
-        // サムネイル: contentImage.thumbnailViewModel.image.sources[last].url
-        let ciTvm = (lvm["contentImage"] as? [String: Any])?["thumbnailViewModel"] as? [String: Any]
-        let thumbSrcs = (ciTvm?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
+        // サムネイル: thumbnailViewModel または collectionThumbnailViewModel
+        let ci = lvm["contentImage"] as? [String: Any]
+        let ciTvm = ci?["thumbnailViewModel"] as? [String: Any]
+        let collTvm = (ci?["collectionThumbnailViewModel"] as? [String: Any])?["primaryThumbnail"] as? [String: Any]
+        let resolvedTvm = ciTvm ?? (collTvm?["thumbnailViewModel"] as? [String: Any])
+        let thumbSrcs = (resolvedTvm?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
         let thumbnailURL = ContentClient.imageURL(from: thumbSrcs?.last?["url"] as? String)
 
         // チャンネル名・チャンネルID: lockupMetadataViewModel 内を再帰探索
@@ -773,14 +861,15 @@ extension ContentClient {
         }
 
         return VideoItem(
-            videoId: videoId,
+            videoId: contentId,
             title: title,
             channelId: channelId,
             channelName: channelName,
             thumbnailURL: thumbnailURL,
             channelAvatarURL: channelAvatarURL,
             viewCountText: nil,
-            timePostedText: nil
+            timePostedText: nil,
+            playlistId: isPlaylist ? contentId : nil
         )
     }
 

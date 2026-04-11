@@ -242,6 +242,114 @@ struct ContentClientParsingTests {
     }
 }
 
+// MARK: - lockupViewModel プレイリスト・ミックス パーサーテスト
+
+struct LockupPlaylistParsingTests {
+
+    private func makePlaylistLockup(contentId: String = "PLtest123", title: String = "テストプレイリスト") -> [String: Any] {
+        [
+            "contentId": contentId,
+            "contentType": "LOCKUP_CONTENT_TYPE_PLAYLIST",
+            "contentImage": [
+                "collectionThumbnailViewModel": [
+                    "primaryThumbnail": [
+                        "thumbnailViewModel": [
+                            "image": ["sources": [["url": "https://i.ytimg.com/vi/test/hq720.jpg"]]]
+                        ]
+                    ]
+                ]
+            ],
+            "metadata": [
+                "lockupMetadataViewModel": [
+                    "title": ["content": title]
+                ]
+            ]
+        ]
+    }
+
+    @Test func parseLockupPlaylistSetsPlaylistId() {
+        let json = makePlaylistLockup(contentId: "PLabc789")
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.playlistId == "PLabc789")
+        #expect(item?.videoId == "PLabc789")
+    }
+
+    @Test func parseLockupVideoHasNilPlaylistId() {
+        let json: [String: Any] = [
+            "contentId": "abc123",
+            "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+            "metadata": ["lockupMetadataViewModel": ["title": ["content": "動画"]]]
+        ]
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.playlistId == nil)
+    }
+
+    @Test func parseLockupPlaylistExtractsThumbnailFromCollection() {
+        let json = makePlaylistLockup()
+        let item = ContentClient.parseLockupViewModel(json)
+        #expect(item?.thumbnailURL?.absoluteString.contains("ytimg.com") == true)
+    }
+
+    @Test func findVideoRenderersIncludesPlaylistLockups() {
+        let json: [String: Any] = [
+            "contents": [
+                ["richItemRenderer": ["content": ["lockupViewModel": makePlaylistLockup(contentId: "PLtest")]]],
+                ["richItemRenderer": ["content": ["lockupViewModel": [
+                    "contentId": "vid1",
+                    "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+                    "metadata": ["lockupMetadataViewModel": ["title": ["content": "動画"]]]
+                ]]]]
+            ]
+        ]
+        let found = ContentClient.findVideoRenderers(in: json)
+        #expect(found.count == 2)
+    }
+}
+
+// MARK: - playlistPanelVideoRenderer パーサーテスト
+
+struct PlaylistPanelParserTests {
+
+    @Test func parsePlaylistPanelRenderers() {
+        let json: [String: Any] = [
+            "contents": [
+                "twoColumnWatchNextResults": [
+                    "playlist": [
+                        "playlist": [
+                            "contents": [
+                                ["playlistPanelVideoRenderer": [
+                                    "videoId": "vid1",
+                                    "title": ["simpleText": "動画1"],
+                                    "thumbnail": ["thumbnails": [["url": "https://i.ytimg.com/vi/vid1/hq.jpg"]]],
+                                    "longBylineText": ["runs": [["text": "チャンネル1"]]]
+                                ]],
+                                ["playlistPanelVideoRenderer": [
+                                    "videoId": "vid2",
+                                    "title": ["runs": [["text": "動画2"]]],
+                                    "thumbnail": ["thumbnails": [["url": "https://i.ytimg.com/vi/vid2/hq.jpg"]]]
+                                ]]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        let items = ContentClient.parsePlaylistPanelRenderers(from: json)
+        #expect(items.count == 2)
+        #expect(items[0].videoId == "vid1")
+        #expect(items[0].title == "動画1")
+        #expect(items[0].channelName == "チャンネル1")
+        #expect(items[1].videoId == "vid2")
+        #expect(items[1].title == "動画2")
+    }
+
+    @Test func parsePlaylistPanelRenderersReturnsEmptyForNoData() {
+        let json: [String: Any] = ["empty": true]
+        let items = ContentClient.parsePlaylistPanelRenderers(from: json)
+        #expect(items.isEmpty)
+    }
+}
+
 // MARK: - AccountViewModel ユニットテスト
 
 @MainActor

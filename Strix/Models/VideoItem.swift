@@ -22,6 +22,22 @@ struct VideoItem: Identifiable {
     let channelAvatarURL: URL?
     let viewCountText: String?
     let timePostedText: String?
+    /// ミックスリスト・プレイリストの場合のプレイリストID
+    let playlistId: String?
+
+    init(videoId: String, title: String, channelId: String? = nil, channelName: String? = nil,
+         thumbnailURL: URL? = nil, channelAvatarURL: URL? = nil,
+         viewCountText: String? = nil, timePostedText: String? = nil, playlistId: String? = nil) {
+        self.videoId = videoId
+        self.title = title
+        self.channelId = channelId
+        self.channelName = channelName
+        self.thumbnailURL = thumbnailURL
+        self.channelAvatarURL = channelAvatarURL
+        self.viewCountText = viewCountText
+        self.timePostedText = timePostedText
+        self.playlistId = playlistId
+    }
 }
 
 // MARK: - YTVideo → VideoItem 変換

@@ -142,7 +142,6 @@ struct HomeView: View {
                     }
 
                     Divider()
-                        .padding(.vertical, 8)
 
                     // ホームフィード
                     if vm.isLoading {
@@ -157,7 +156,6 @@ struct HomeView: View {
                         )
                         .padding(.top, 40)
                     } else {
-                        sectionHeader("おすすめ")
                         feedSection
                     }
                 }
@@ -193,7 +191,6 @@ struct HomeView: View {
     private var playlistQuickAccessSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                sectionHeader("プレイリスト")
                 Spacer()
                 Button { showPlaylistEdit = true } label: {
                     Image(systemName: "pencil")
@@ -218,8 +215,7 @@ struct HomeView: View {
                 .padding(.bottom, 4)
             }
         }
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.bottom, 4)
     }
 
     // MARK: - フィード
@@ -227,12 +223,24 @@ struct HomeView: View {
     private var feedSection: some View {
         LazyVStack(spacing: 0) {
             ForEach(vm.videos) { video in
-                Button {
-                    path.append(video.videoId)
-                } label: {
-                    VideoCardView(video: video)
+                if let playlistId = video.playlistId {
+                    // ミックスリスト・プレイリストはプレイリスト詳細へ
+                    NavigationLink {
+                        PlaylistDetailView(
+                            playlist: YTPlaylist(playlistId: playlistId, title: video.title)
+                        )
+                    } label: {
+                        VideoCardView(video: video)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        path.append(video.videoId)
+                    } label: {
+                        VideoCardView(video: video)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 Divider()
             }
@@ -308,8 +316,8 @@ private struct PlaylistCircleItem: View {
 
             Text(playlist.title ?? "プレイリスト")
                 .font(.caption)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .frame(width: 72)
         }
     }
