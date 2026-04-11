@@ -8,6 +8,7 @@
 import Testing
 import Foundation
 import SwiftData
+import YouTubeKit
 @testable import Strix
 
 // MARK: - ContentClient JSON パーサー ユニットテスト
@@ -225,6 +226,59 @@ struct ContentClientParsingTests {
         #expect(item?.channelName == "プレイリストチャンネル")
         #expect(item?.viewCountText == "123万回視聴")
         #expect(item?.timePostedText == "1年前")
+    }
+}
+
+// MARK: - AccountViewModel ユニットテスト
+
+@MainActor
+struct AccountViewModelTests {
+
+    @Test func loadPopulatesLibraryPlaylists() async {
+        let library = LibraryResponse(
+            watchLater: YTPlaylist(playlistId: "VLWL", title: "後で見る", videoCount: "12"),
+            likes: YTPlaylist(playlistId: "VLLL", title: "いいねした動画", videoCount: "8"),
+            playlists: [
+                YTPlaylist(playlistId: "VLPL1", title: "作業用", videoCount: "24"),
+                YTPlaylist(playlistId: "VLPL2", title: "後で確認", videoCount: "6")
+            ]
+        )
+
+        let client = AccountClient.mock(
+            fetchInfo: { AccountInfo(name: "Test User", handle: "@test", avatarURL: nil) },
+            fetchLibrary: { library }
+        )
+        let vm = AccountViewModel(accountClient: client)
+
+        await vm.load()
+
+        #expect(vm.accountInfo?.name == "Test User")
+        #expect(vm.watchLater?.playlistId == "VLWL")
+        #expect(vm.likes?.playlistId == "VLLL")
+        #expect(vm.playlists.map(\.playlistId) == ["VLPL1", "VLPL2"])
+        #expect(!vm.isLoading)
+    }
+
+    @Test func reloadClearsAndRepopulatesPlaylists() async {
+        var loadCount = 0
+        let client = AccountClient.mock(
+            fetchLibrary: {
+                loadCount += 1
+                return LibraryResponse(
+                    playlists: [
+                        YTPlaylist(playlistId: "VL\(loadCount)", title: "Playlist \(loadCount)")
+                    ]
+                )
+            }
+        )
+        let vm = AccountViewModel(accountClient: client)
+
+        await vm.load()
+        #expect(vm.playlists.map(\.playlistId) == ["VL1"])
+
+        await vm.reload()
+        #expect(vm.playlists.map(\.playlistId) == ["VL2"])
+        #expect(!vm.isLoading)
     }
 }
 

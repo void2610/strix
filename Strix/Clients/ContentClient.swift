@@ -60,11 +60,12 @@ extension ContentClient {
             fetchPlaylistVideos: { playlistId in
                 let cookies = AuthState.shared.cookieString ?? ""
                 guard !cookies.isEmpty else { return [] }
+                // VLプレフィックス付き・なし両方を試す
                 let candidateBrowseIds: [String] = {
                     if playlistId.hasPrefix("VL"), playlistId.count > 2 {
                         return [playlistId, String(playlistId.dropFirst(2))]
                     } else {
-                        return [playlistId]
+                        return ["VL\(playlistId)", playlistId]
                     }
                 }()
 

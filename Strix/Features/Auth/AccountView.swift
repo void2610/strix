@@ -11,10 +11,13 @@ import NukeUI
 
 // MARK: - ViewModel
 
+@MainActor
 @Observable
 final class AccountViewModel {
     var accountInfo: AccountInfo?
-    var library: AccountLibraryResponse?
+    var watchLater: YTPlaylist?
+    var likes: YTPlaylist?
+    var playlists: [YTPlaylist] = []
     var isLoading = false
 
     private let accountClient: AccountClient
@@ -35,7 +38,9 @@ final class AccountViewModel {
     func reload() async {
         isLoading = false
         accountInfo = nil
-        library = nil
+        watchLater = nil
+        likes = nil
+        playlists = []
         await load()
     }
 
@@ -44,7 +49,10 @@ final class AccountViewModel {
     }
 
     private func loadLibrary() async {
-        library = try? await accountClient.fetchLibrary()
+        guard let library = try? await accountClient.fetchLibrary() else { return }
+        watchLater = library.watchLater
+        likes = library.likes
+        playlists = library.playlists
     }
 }
 
@@ -143,27 +151,27 @@ struct AccountView: View {
 
             NavigationLink {
                 PlaylistDetailView(
-                    playlist: vm.library?.watchLater
+                    playlist: vm.watchLater
                         ?? YTPlaylist(playlistId: "VLWL", title: "後で見る")
                 )
             } label: {
                 playlistLabel(
                     title: "後で見る",
                     systemImage: "bookmark.fill",
-                    count: vm.library?.watchLater?.videoCount
+                    count: vm.watchLater?.videoCount
                 )
             }
 
             NavigationLink {
                 PlaylistDetailView(
-                    playlist: vm.library?.likes
+                    playlist: vm.likes
                         ?? YTPlaylist(playlistId: "VLLL", title: "いいねした動画")
                 )
             } label: {
                 playlistLabel(
                     title: "いいねした動画",
                     systemImage: "hand.thumbsup.fill",
-                    count: vm.library?.likes?.videoCount
+                    count: vm.likes?.videoCount
                 )
             }
         }
@@ -171,12 +179,18 @@ struct AccountView: View {
 
     // MARK: - プレイリスト一覧
 
-    @ViewBuilder
     private var playlistSection: some View {
-        let playlists = vm.library?.playlists ?? []
-        if !playlists.isEmpty {
-            Section("プレイリスト") {
-                ForEach(playlists, id: \.playlistId) { playlist in
+        Section("プレイリスト") {
+            if vm.playlists.isEmpty {
+                if vm.isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text("プレイリストがありません")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ForEach(vm.playlists, id: \.playlistId) { playlist in
                     NavigationLink {
                         PlaylistDetailView(playlist: playlist)
                     } label: {

@@ -8,6 +8,7 @@
 import SwiftUI
 import YouTubeKit
 
+@MainActor
 @Observable
 final class PlaylistDetailViewModel {
     var videos: [VideoItem] = []
