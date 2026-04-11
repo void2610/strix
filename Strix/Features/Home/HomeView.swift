@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 import YouTubeKit
 import NukeUI
 
@@ -16,6 +17,8 @@ import NukeUI
 final class HomeViewModel {
     var videos: [VideoItem] = []
     var quickPlaylists: [YTPlaylist] = []
+    /// 編集画面用の全プレイリスト（フィルタリング前）
+    var allPlaylists: [YTPlaylist] = []
     var isLoading = false
     var isLoadingMore = false
     var error: String?
@@ -32,7 +35,7 @@ final class HomeViewModel {
         self.accountClient = accountClient
     }
 
-    func load() async {
+    func load(modelContext: ModelContext) async {
         guard videos.isEmpty, !isLoading else { return }
         loadGeneration += 1
         let gen = loadGeneration
@@ -40,18 +43,32 @@ final class HomeViewModel {
         error = nil
         defer { isLoading = false }
         async let feedTask: Void = loadFeed(generation: gen)
-        async let playlistTask: Void = loadQuickPlaylists(generation: gen)
+        async let playlistTask: Void = loadQuickPlaylists(generation: gen, modelContext: modelContext)
         _ = await (feedTask, playlistTask)
     }
 
-    func reload() async {
-        loadGeneration += 1  // 進行中のロードを世代で無効化
+    func reload(modelContext: ModelContext) async {
+        loadGeneration += 1
         isLoading = false
         isLoadingMore = false
         videos = []
         quickPlaylists = []
+        allPlaylists = []
         continuationToken = nil
-        await load()
+        await load(modelContext: modelContext)
+    }
+
+    /// PinnedPlaylist の変更後にネットワーク通信なしで再フィルタリングする
+    func refilterPlaylists(modelContext: ModelContext) {
+        let hasCustomized = UserDefaults.standard.bool(forKey: "hasCustomizedHomePlaylists")
+        if hasCustomized {
+            let descriptor = FetchDescriptor<PinnedPlaylist>(sortBy: [SortDescriptor(\.sortOrder)])
+            let pinned = (try? modelContext.fetch(descriptor)) ?? []
+            let pinnedIds = Set(pinned.map(\.playlistId))
+            quickPlaylists = allPlaylists.filter { pinnedIds.contains($0.playlistId) }
+        } else {
+            quickPlaylists = allPlaylists
+        }
     }
 
     func loadMore() async {
@@ -93,7 +110,7 @@ final class HomeViewModel {
         }
     }
 
-    private func loadQuickPlaylists(generation: Int) async {
+    private func loadQuickPlaylists(generation: Int, modelContext: ModelContext) async {
         guard AuthState.shared.isSignedIn else { return }
         guard let library = try? await accountClient.fetchLibrary() else { return }
         guard generation == loadGeneration else { return }
@@ -101,7 +118,8 @@ final class HomeViewModel {
         if let wl = library.watchLater { items.append(wl) }
         if let likes = library.likes { items.append(likes) }
         items.append(contentsOf: library.playlists)
-        quickPlaylists = items
+        allPlaylists = items
+        refilterPlaylists(modelContext: modelContext)
     }
 
 }
@@ -111,6 +129,8 @@ final class HomeViewModel {
 struct HomeView: View {
     @State private var vm = HomeViewModel()
     @State private var path = NavigationPath()
+    @State private var showPlaylistEdit = false
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -147,8 +167,14 @@ struct HomeView: View {
             .refreshable {
                 // SwiftUI が refreshable タスクをキャンセルすると URLSession も -999 で失敗するため、
                 // 非構造化タスクで reload を実行してキャンセル伝播を切り離す
-                let task = Task { await vm.reload() }
+                let ctx = modelContext
+                let task = Task { await vm.reload(modelContext: ctx) }
                 await task.value
+            }
+            .sheet(isPresented: $showPlaylistEdit) {
+                HomePlaylistEditView(allPlaylists: vm.allPlaylists) {
+                    vm.refilterPlaylists(modelContext: modelContext)
+                }
             }
             .navigationDestination(for: String.self) { videoID in
                 PlayerView(videoID: videoID)
@@ -158,7 +184,7 @@ struct HomeView: View {
             }
         }
         .task(id: AuthState.shared.isSignedIn) {
-            await vm.reload()
+            await vm.reload(modelContext: modelContext)
         }
     }
 
@@ -166,7 +192,16 @@ struct HomeView: View {
 
     private var playlistQuickAccessSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("プレイリスト")
+            HStack {
+                sectionHeader("プレイリスト")
+                Spacer()
+                Button { showPlaylistEdit = true } label: {
+                    Image(systemName: "pencil")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.trailing, 16)
+            }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 16) {

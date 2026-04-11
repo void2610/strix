@@ -622,56 +622,171 @@ struct SearchViewModelTests {
 @MainActor
 struct HomeViewModelTests {
 
-    @Test func loadSetsLoadingFalseAfterCompletion() async {
+    private func makeInMemoryContext() throws -> ModelContext {
+        let container = try ModelContainer(
+            for: WatchedVideo.self, PinnedPlaylist.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        return ModelContext(container)
+    }
+
+    @Test func loadSetsLoadingFalseAfterCompletion() async throws {
+        let ctx = try makeInMemoryContext()
         let vm = HomeViewModel(client: .mock())
-        await vm.load()
+        await vm.load(modelContext: ctx)
         #expect(!vm.isLoading)
     }
 
-    @Test func loadSetsErrorOnFailure() async {
+    @Test func loadSetsErrorOnFailure() async throws {
+        let ctx = try makeInMemoryContext()
         let client = ContentClient.mock(fetchHome: {
             throw URLError(.notConnectedToInternet)
         })
         let vm = HomeViewModel(client: client)
-        await vm.load()
+        await vm.load(modelContext: ctx)
         #expect(vm.error != nil)
         #expect(!vm.isLoading)
     }
 
-    @Test func loadIsSkippedWhenVideosAlreadyPresent() async {
-        // 一度失敗した後に videos を持つ状態を作れないため、
-        // callCount が 1 回だけであることで「一度実行される」ことを確認する
+    @Test func loadIsSkippedWhenVideosAlreadyPresent() async throws {
+        let ctx = try makeInMemoryContext()
         var callCount = 0
         let client = ContentClient.mock(fetchHome: {
             callCount += 1
-            throw URLError(.cancelled) // 空配列以外の方法でロード完了させる
+            throw URLError(.cancelled)
         })
         let vm = HomeViewModel(client: client)
-        await vm.load() // 1回目（videos は空のまま）
-        await vm.load() // 2回目（videos が空なので guard を通過してしまう → 既知の振る舞い）
-        // 少なくとも1回は呼ばれることを確認
+        await vm.load(modelContext: ctx)
+        await vm.load(modelContext: ctx)
         #expect(callCount >= 1)
     }
 
-    @Test func reloadClearsErrorAndReloads() async {
+    @Test func reloadClearsErrorAndReloads() async throws {
+        let ctx = try makeInMemoryContext()
         var callCount = 0
         let client = ContentClient.mock(fetchHome: {
             callCount += 1
             throw URLError(.notConnectedToInternet)
         })
         let vm = HomeViewModel(client: client)
-        await vm.load()
+        await vm.load(modelContext: ctx)
         #expect(vm.error != nil)
 
-        await vm.reload() // reload は強制的に再実行する
+        await vm.reload(modelContext: ctx)
         #expect(callCount == 2)
     }
 
-    @Test func reloadClearsVideosBeforeLoad() async {
+    @Test func reloadClearsVideosBeforeLoad() async throws {
+        let ctx = try makeInMemoryContext()
         let vm = HomeViewModel(client: .mock())
-        // reload 後も isLoading が false に戻ることを確認
-        await vm.reload()
+        await vm.reload(modelContext: ctx)
         #expect(!vm.isLoading)
+    }
+
+    @Test func refilterShowsAllWhenNotCustomized() async throws {
+        let ctx = try makeInMemoryContext()
+        UserDefaults.standard.set(false, forKey: "hasCustomizedHomePlaylists")
+        defer { UserDefaults.standard.removeObject(forKey: "hasCustomizedHomePlaylists") }
+
+        let vm = HomeViewModel(client: .mock())
+        vm.allPlaylists = [
+            YTPlaylist(playlistId: "VLWL", title: "後で見る"),
+            YTPlaylist(playlistId: "VLLL", title: "いいね"),
+            YTPlaylist(playlistId: "PLtest", title: "テスト")
+        ]
+        vm.refilterPlaylists(modelContext: ctx)
+        #expect(vm.quickPlaylists.count == 3)
+    }
+
+    @Test func refilterShowsOnlyPinnedWhenCustomized() async throws {
+        let ctx = try makeInMemoryContext()
+        UserDefaults.standard.set(true, forKey: "hasCustomizedHomePlaylists")
+        defer { UserDefaults.standard.removeObject(forKey: "hasCustomizedHomePlaylists") }
+
+        // VLWL と PLtest だけピン
+        ctx.insert(PinnedPlaylist(playlistId: "VLWL", sortOrder: 0))
+        ctx.insert(PinnedPlaylist(playlistId: "PLtest", sortOrder: 1))
+        try ctx.save()
+
+        let vm = HomeViewModel(client: .mock())
+        vm.allPlaylists = [
+            YTPlaylist(playlistId: "VLWL", title: "後で見る"),
+            YTPlaylist(playlistId: "VLLL", title: "いいね"),
+            YTPlaylist(playlistId: "PLtest", title: "テスト")
+        ]
+        vm.refilterPlaylists(modelContext: ctx)
+        #expect(vm.quickPlaylists.count == 2)
+        #expect(vm.quickPlaylists.map(\.playlistId) == ["VLWL", "PLtest"])
+    }
+
+    @Test func refilterShowsNoneWhenCustomizedWithEmptyPins() async throws {
+        let ctx = try makeInMemoryContext()
+        UserDefaults.standard.set(true, forKey: "hasCustomizedHomePlaylists")
+        defer { UserDefaults.standard.removeObject(forKey: "hasCustomizedHomePlaylists") }
+
+        let vm = HomeViewModel(client: .mock())
+        vm.allPlaylists = [
+            YTPlaylist(playlistId: "VLWL", title: "後で見る"),
+            YTPlaylist(playlistId: "VLLL", title: "いいね")
+        ]
+        vm.refilterPlaylists(modelContext: ctx)
+        #expect(vm.quickPlaylists.isEmpty)
+    }
+}
+
+// MARK: - PinnedPlaylist SwiftData ユニットテスト
+
+struct PinnedPlaylistTests {
+
+    @Test func insertAndFetch() throws {
+        let container = try ModelContainer(
+            for: PinnedPlaylist.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let ctx = ModelContext(container)
+
+        ctx.insert(PinnedPlaylist(playlistId: "VLWL", sortOrder: 0))
+        ctx.insert(PinnedPlaylist(playlistId: "PLtest", sortOrder: 1))
+        try ctx.save()
+
+        let fetched = try ctx.fetch(FetchDescriptor<PinnedPlaylist>(sortBy: [SortDescriptor(\.sortOrder)]))
+        #expect(fetched.count == 2)
+        #expect(fetched[0].playlistId == "VLWL")
+        #expect(fetched[1].playlistId == "PLtest")
+    }
+
+    @Test func deleteAll() throws {
+        let container = try ModelContainer(
+            for: PinnedPlaylist.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let ctx = ModelContext(container)
+
+        ctx.insert(PinnedPlaylist(playlistId: "VLWL", sortOrder: 0))
+        ctx.insert(PinnedPlaylist(playlistId: "VLLL", sortOrder: 1))
+        try ctx.save()
+
+        try ctx.delete(model: PinnedPlaylist.self)
+        try ctx.save()
+
+        let fetched = try ctx.fetch(FetchDescriptor<PinnedPlaylist>())
+        #expect(fetched.isEmpty)
+    }
+
+    @Test func uniqueConstraint() throws {
+        let container = try ModelContainer(
+            for: PinnedPlaylist.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let ctx = ModelContext(container)
+
+        ctx.insert(PinnedPlaylist(playlistId: "VLWL", sortOrder: 0))
+        ctx.insert(PinnedPlaylist(playlistId: "VLWL", sortOrder: 1))
+        try ctx.save()
+
+        // ユニーク制約で1件に集約される
+        let fetched = try ctx.fetch(FetchDescriptor<PinnedPlaylist>())
+        #expect(fetched.count == 1)
     }
 }
 
