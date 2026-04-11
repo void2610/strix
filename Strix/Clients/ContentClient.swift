@@ -28,6 +28,15 @@ struct ChannelInfo {
     let bannerURL: URL?
 }
 
+/// チャンネルプレイリスト項目
+struct ChannelPlaylistItem: Identifiable {
+    var id: String { playlistId }
+    let playlistId: String
+    let title: String
+    let thumbnailURL: URL?
+    let videoCount: String?
+}
+
 /// ホームフィード・検索・関連動画を取得するクライアント。
 /// 戻り値は VideoItem に統一している。
 struct ContentClient {
@@ -42,6 +51,8 @@ struct ContentClient {
     var fetchChannelTab: (_ channelId: String, _ tab: ChannelTab) async throws -> ([VideoItem], String?)
     /// チャンネルタブのページネーション
     var fetchChannelTabPage: (_ continuation: String) async throws -> ([VideoItem], String?)
+    /// チャンネルの再生リスト一覧を取得
+    var fetchChannelPlaylists: (_ channelId: String) async throws -> [ChannelPlaylistItem]
 }
 
 // MARK: - モック（テスト用）
@@ -56,9 +67,10 @@ extension ContentClient {
         fetchRelated: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
         fetchChannelTab: @escaping (String, ChannelTab) async throws -> ([VideoItem], String?) = { _, _ in ([], nil) },
-        fetchChannelTabPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) }
+        fetchChannelTabPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
+        fetchChannelPlaylists: @escaping (String) async throws -> [ChannelPlaylistItem] = { _ in [] }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists)
     }
 }
 
@@ -153,6 +165,12 @@ extension ContentClient {
                 return try await ContentClient.fetchBrowseContinuationViaInnertubeAPI(
                     cookies: cookies, continuation: continuation
                 )
+            },
+            fetchChannelPlaylists: { channelId in
+                let cookies = AuthState.shared.cookieString ?? ""
+                let params = "EglwbGF5bGlzdHPyBgQKAkIA"
+                let json = try await ContentClient.callBrowseAPI(browseId: channelId, params: params, cookies: cookies)
+                return ContentClient.parsePlaylistLockups(from: json)
             }
         )
     }()
@@ -215,7 +233,7 @@ extension ContentClient {
     }
 
     /// Innertube /browse API を認証付きで呼び出す共通メソッド（params 対応）。
-    private static func callBrowseAPI(browseId: String, params: String?, cookies: String) async throws -> [String: Any] {
+    static func callBrowseAPI(browseId: String, params: String?, cookies: String) async throws -> [String: Any] {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -255,6 +273,59 @@ extension ContentClient {
         let session = URLSession(configuration: sessionConfig)
         let (data, _) = try await session.data(for: request)
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    /// JSON ツリーから lockupViewModel (PLAYLIST/ALBUM) をパースしてプレイリスト一覧を返す。
+    static func parsePlaylistLockups(from json: Any) -> [ChannelPlaylistItem] {
+        var items: [ChannelPlaylistItem] = []
+        findLockups(in: json, items: &items)
+        return items
+    }
+
+    private static func findLockups(in json: Any, items: inout [ChannelPlaylistItem]) {
+        if let dict = json as? [String: Any] {
+            if let lvm = dict["lockupViewModel"] as? [String: Any],
+               let contentType = lvm["contentType"] as? String,
+               contentType.contains("PLAYLIST") || contentType.contains("ALBUM"),
+               let contentId = lvm["contentId"] as? String {
+                let meta = (lvm["metadata"] as? [String: Any])?["lockupMetadataViewModel"] as? [String: Any]
+                let title = (meta?["title"] as? [String: Any])?["content"] as? String ?? contentId
+
+                // サムネイル: collectionThumbnailViewModel.primaryThumbnail.thumbnailViewModel.image.sources
+                let ci = lvm["contentImage"] as? [String: Any]
+                let ctvm = ci?["collectionThumbnailViewModel"] as? [String: Any]
+                    ?? ci?["thumbnailViewModel"] as? [String: Any]
+                let primaryThumb = (ctvm?["primaryThumbnail"] as? [String: Any])?["thumbnailViewModel"] as? [String: Any]
+                    ?? ctvm
+                let thumbSrcs = (primaryThumb?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
+                let thumbnailURL = imageURL(from: thumbSrcs?.first?["url"] as? String)
+
+                // 動画数: overlays 内の thumbnailBadgeViewModel.text
+                var videoCount: String? = nil
+                if let overlays = primaryThumb?["overlays"] as? [[String: Any]] {
+                    for overlay in overlays {
+                        if let badge = overlay["thumbnailOverlayBadgeViewModel"] as? [String: Any],
+                           let badges = badge["thumbnailBadges"] as? [[String: Any]],
+                           let first = badges.first,
+                           let text = (first["thumbnailBadgeViewModel"] as? [String: Any])?["text"] as? String {
+                            videoCount = text
+                            break
+                        }
+                    }
+                }
+
+                items.append(ChannelPlaylistItem(
+                    playlistId: contentId,
+                    title: title,
+                    thumbnailURL: thumbnailURL,
+                    videoCount: videoCount
+                ))
+            } else {
+                for (_, value) in dict { findLockups(in: value, items: &items) }
+            }
+        } else if let array = json as? [Any] {
+            for item in array { findLockups(in: item, items: &items) }
+        }
     }
 
     /// pageHeaderViewModel からテキストを抽出するヘルパー

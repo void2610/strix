@@ -7,8 +7,8 @@
 
 import Foundation
 
-/// Innertube API を iOS クライアントとして呼び出して動画ストリームを取得するクライアント。
-/// iOS クライアントは通常動画にも hlsManifestUrl（M3U8）を返すため AVPlayer で直接再生可能。
+/// Innertube API を呼び出して動画ストリームを取得するクライアント。
+/// IOS（認証付き）→ WEB（認証付き）の順にフォールバックする。
 struct YouTubeClient {
     var fetchVideo: (String) async throws -> VideoInfo
 }
@@ -36,104 +36,216 @@ enum YouTubeClientError: LocalizedError {
     }
 }
 
+// MARK: - 本番クライアント
+
 extension YouTubeClient {
     static let live = YouTubeClient(
         fetchVideo: { videoID in
-            // IOS クライアント（v21.13.6）で Innertube /player を呼ぶ。
-            // iOS クライアントは通常動画でも hlsManifestUrl を返す。
-            let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(
-                "com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 26_4 like Mac OS X;)",
-                forHTTPHeaderField: "User-Agent"
-            )
-            // クライアント識別ヘッダー（IOS = 5）
-            request.setValue("5",        forHTTPHeaderField: "X-Youtube-Client-Name")
-            request.setValue("21.13.6",  forHTTPHeaderField: "X-Youtube-Client-Version")
-            // ログイン済みの場合はクッキーを付与して認証済みストリームを取得する
-            if let cookies = AuthState.shared.cookieString {
-                request.setValue(cookies, forHTTPHeaderField: "Cookie")
-            }
-
-            let body: [String: Any] = [
-                "videoId": videoID,
-                "contentCheckOk": true,
-                "racyCheckOk": true,
-                "context": [
-                    "client": [
-                        "clientName": "IOS",
-                        "clientVersion": "21.13.6",
-                        "deviceMake": "Apple",
-                        "deviceModel": "iPhone16,2",
-                        "osName": "iPhone",
-                        "osVersion": "26.4.23E246",
-                        "userAgent": "com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 26_4 like Mac OS X;)",
-                        "timeZone": "UTC",
-                        "utcOffsetMinutes": 0
-                    ]
-                ],
-                "playbackContext": [
-                    "contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS"]
-                ]
+            // IOS → WEB の順にフォールバック（両方認証付き）
+            let strategies: [(String, () async throws -> VideoInfo)] = [
+                ("IOS", { try await fetchWithIOS(videoID: videoID) }),
+                ("WEB", { try await fetchWithWEB(videoID: videoID) })
             ]
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            var lastError: Error = YouTubeClientError.streamNotFound
 
-            let data: Data
-            do {
-                let (d, _) = try await URLSession.shared.data(for: request)
-                data = d
-            } catch {
-                throw YouTubeClientError.networkError(error)
-            }
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw YouTubeClientError.streamNotFound
-            }
-
-            // 再生可否を確認
-            let playability = json["playabilityStatus"] as? [String: Any]
-            let status = playability?["status"] as? String ?? ""
-            if status != "OK" {
-                let reason = playability?["reason"] as? String ?? status
-                throw YouTubeClientError.notPlayable(reason)
-            }
-
-            // タイトルとサムネイルを取得
-            let videoDetails = json["videoDetails"] as? [String: Any]
-            let title = videoDetails?["title"] as? String ?? videoID
-            let thumbnails = (videoDetails?["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
-            let thumbnailURL = thumbnails?.last?["url"] as? String ?? ""
-            let channelId = videoDetails?["channelId"] as? String
-            let channelName = videoDetails?["author"] as? String
-
-            // チャンネルアバター: endscreen のチャンネル要素 → レスポンス全体から yt3.ggpht.com URL を探索
-            var channelAvatarURL: URL? = nil
-            if let endscreen = (json["endscreen"] as? [String: Any])?["endscreenRenderer"] as? [String: Any],
-               let elements = endscreen["elements"] as? [[String: Any]] {
-                for element in elements {
-                    if let renderer = element["endscreenElementRenderer"] as? [String: Any],
-                       renderer["style"] as? String == "CHANNEL",
-                       let thumbs = (renderer["image"] as? [String: Any])?["thumbnails"] as? [[String: Any]] {
-                        channelAvatarURL = ContentClient.imageURL(from: thumbs.last?["url"] as? String)
-                        break
-                    }
+            for (name, fetch) in strategies {
+                do {
+                    let info = try await fetch()
+                    strixLog("player[\(name)] 成功")
+                    return info
+                } catch {
+                    strixLog("player[\(name)] 失敗: \(error.localizedDescription)")
+                    lastError = error
                 }
             }
-            // endscreen から取得できなかった場合、レスポンス全体から探索
-            if channelAvatarURL == nil {
-                channelAvatarURL = ContentClient.findAvatarURL(in: json)
-            }
-
-            // HLS manifest URL（iOS クライアントは通常動画でもこれを返す）
-            let streamingData = json["streamingData"] as? [String: Any]
-            guard let hlsString = streamingData?["hlsManifestUrl"] as? String,
-                  let streamURL = URL(string: hlsString) else {
-                throw YouTubeClientError.streamNotFound
-            }
-
-            return VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: channelAvatarURL)
+            throw lastError
         }
     )
+
+    // MARK: - IOS クライアント（HLS manifest を返す）
+
+    private static func fetchWithIOS(videoID: String) async throws -> VideoInfo {
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(
+            "com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 18_1 like Mac OS X;)",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("5", forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue("21.13.6", forHTTPHeaderField: "X-Youtube-Client-Version")
+
+        // 認証ヘッダー
+        applyAuth(to: &request)
+
+        let body: [String: Any] = [
+            "videoId": videoID,
+            "contentCheckOk": true,
+            "racyCheckOk": true,
+            "context": [
+                "client": [
+                    "clientName": "IOS",
+                    "clientVersion": "21.13.6",
+                    "deviceMake": "Apple",
+                    "deviceModel": "iPhone16,2",
+                    "osName": "iPhone",
+                    "osVersion": "18.1.23B74",
+                    "hl": "ja",
+                    "gl": "JP"
+                ]
+            ],
+            "playbackContext": [
+                "contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS"]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let json = try await sendPlayerRequest(request)
+        let meta = extractVideoMeta(from: json, videoID: videoID)
+
+        // HLS manifest URL
+        let streamingData = json["streamingData"] as? [String: Any]
+        guard let hlsString = streamingData?["hlsManifestUrl"] as? String,
+              let streamURL = URL(string: hlsString) else {
+            throw YouTubeClientError.streamNotFound
+        }
+
+        return VideoInfo(streamURL: streamURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
+                         channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
+    }
+
+    // MARK: - WEB クライアント（adaptive/combined formats を返す）
+
+    private static func fetchWithWEB(videoID: String) async throws -> VideoInfo {
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("1", forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+
+        // 認証ヘッダー（WEB は Cookie + SAPISIDHASH が必須）
+        applyAuth(to: &request)
+
+        let body: [String: Any] = [
+            "videoId": videoID,
+            "contentCheckOk": true,
+            "racyCheckOk": true,
+            "context": [
+                "client": [
+                    "clientName": "WEB",
+                    "clientVersion": "2.20241201.01.00",
+                    "hl": "ja",
+                    "gl": "JP"
+                ]
+            ],
+            "playbackContext": [
+                "contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS"]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let json = try await sendPlayerRequest(request)
+        let meta = extractVideoMeta(from: json, videoID: videoID)
+
+        // ストリーム URL: HLS → combined formats → adaptive formats
+        let streamingData = json["streamingData"] as? [String: Any]
+
+        // HLS（稀に WEB でも返る場合がある）
+        if let hlsString = streamingData?["hlsManifestUrl"] as? String,
+           let streamURL = URL(string: hlsString) {
+            return VideoInfo(streamURL: streamURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
+                             channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
+        }
+
+        // combined formats（audio+video 一体型、最も再生しやすい）
+        if let formats = streamingData?["formats"] as? [[String: Any]] {
+            // 最高画質を選択
+            if let best = formats.last, let urlStr = best["url"] as? String, let streamURL = URL(string: urlStr) {
+                return VideoInfo(streamURL: streamURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
+                                 channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
+            }
+        }
+
+        throw YouTubeClientError.streamNotFound
+    }
+
+    // MARK: - 共通ヘルパー
+
+    /// 認証ヘッダーをリクエストに付与する
+    private static func applyAuth(to request: inout URLRequest) {
+        guard let cookies = AuthState.shared.cookieString, !cookies.isEmpty else { return }
+        let deduped = ContentClient.deduplicateCookies(cookies)
+        request.setValue(deduped, forHTTPHeaderField: "Cookie")
+        if let auth = ContentClient.buildSapisidHash(from: deduped) {
+            request.setValue(auth, forHTTPHeaderField: "Authorization")
+        }
+        request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+    }
+
+    /// /player リクエストを送信し、レスポンス JSON を返す。再生不可ならエラーを投げる。
+    private static func sendPlayerRequest(_ request: URLRequest) async throws -> [String: Any] {
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+
+        let data: Data
+        do {
+            let (d, _) = try await session.data(for: request)
+            data = d
+        } catch {
+            throw YouTubeClientError.networkError(error)
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw YouTubeClientError.streamNotFound
+        }
+
+        let playability = json["playabilityStatus"] as? [String: Any]
+        let status = playability?["status"] as? String ?? ""
+        if status != "OK" {
+            let reason = playability?["reason"] as? String ?? status
+            throw YouTubeClientError.notPlayable(reason)
+        }
+
+        return json
+    }
+
+    /// レスポンスからタイトル・サムネイル・チャンネル情報を抽出する
+    private static func extractVideoMeta(from json: [String: Any], videoID: String)
+        -> (title: String, thumbnailURL: String, channelId: String?, channelName: String?, channelAvatarURL: URL?) {
+        let videoDetails = json["videoDetails"] as? [String: Any]
+        let title = videoDetails?["title"] as? String ?? videoID
+        let thumbnails = (videoDetails?["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+        let thumbnailURL = thumbnails?.last?["url"] as? String ?? ""
+        let channelId = videoDetails?["channelId"] as? String
+        let channelName = videoDetails?["author"] as? String
+
+        // チャンネルアバター
+        var channelAvatarURL: URL? = nil
+        if let endscreen = (json["endscreen"] as? [String: Any])?["endscreenRenderer"] as? [String: Any],
+           let elements = endscreen["elements"] as? [[String: Any]] {
+            for element in elements {
+                if let renderer = element["endscreenElementRenderer"] as? [String: Any],
+                   renderer["style"] as? String == "CHANNEL",
+                   let thumbs = (renderer["image"] as? [String: Any])?["thumbnails"] as? [[String: Any]] {
+                    channelAvatarURL = ContentClient.imageURL(from: thumbs.last?["url"] as? String)
+                    break
+                }
+            }
+        }
+        if channelAvatarURL == nil {
+            channelAvatarURL = ContentClient.findAvatarURL(in: json)
+        }
+
+        return (title, thumbnailURL, channelId, channelName, channelAvatarURL)
+    }
 }

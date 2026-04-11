@@ -7,6 +7,7 @@
 
 import SwiftUI
 import NukeUI
+import YouTubeKit
 
 // MARK: - ViewModel
 
@@ -17,6 +18,7 @@ final class ChannelViewModel {
     var selectedTab: ChannelTab = .home
     var tabVideos: [ChannelTab: [VideoItem]] = [:]
     var tabContinuations: [ChannelTab: String?] = [:]
+    var playlists: [ChannelPlaylistItem] = []
     var isLoading = true
     var isLoadingTab = false
     var isLoadingMore = false
@@ -47,9 +49,19 @@ final class ChannelViewModel {
     /// タブ切り替え時にコンテンツを取得
     func selectTab(_ tab: ChannelTab) async {
         selectedTab = tab
+        guard let channelId = channelInfo?.channelId else { return }
+
+        // 再生リストタブは専用ロジック
+        if tab == .playlists {
+            if !playlists.isEmpty { return }
+            isLoadingTab = true
+            playlists = (try? await contentClient.fetchChannelPlaylists(channelId)) ?? []
+            isLoadingTab = false
+            return
+        }
+
         // 既にデータがあればスキップ
         if tabVideos[tab] != nil { return }
-        guard let channelId = channelInfo?.channelId else { return }
         isLoadingTab = true
         do {
             let (videos, continuation) = try await contentClient.fetchChannelTab(channelId, tab)
@@ -181,6 +193,8 @@ struct ChannelView: View {
             ProgressView()
                 .frame(maxWidth: .infinity)
                 .padding(.top, 40)
+        } else if vm.selectedTab == .playlists {
+            playlistsContent
         } else if vm.currentVideos.isEmpty {
             ContentUnavailableView(
                 "コンテンツがありません",
@@ -207,6 +221,76 @@ struct ChannelView: View {
                     }
             }
         }
+    }
+
+    // MARK: - 再生リスト一覧
+
+    @ViewBuilder
+    private var playlistsContent: some View {
+        if vm.playlists.isEmpty {
+            ContentUnavailableView(
+                "再生リストがありません",
+                systemImage: "list.and.film"
+            )
+            .padding(.top, 40)
+        } else {
+            ForEach(vm.playlists) { playlist in
+                NavigationLink {
+                    PlaylistDetailView(
+                        playlist: YTPlaylist(playlistId: playlist.playlistId, title: playlist.title)
+                    )
+                } label: {
+                    playlistRow(playlist: playlist)
+                }
+                .buttonStyle(.plain)
+
+                Divider()
+            }
+        }
+    }
+
+    private func playlistRow(playlist: ChannelPlaylistItem) -> some View {
+        HStack(spacing: 12) {
+            // サムネイル
+            if let url = playlist.thumbnailURL {
+                LazyImage(url: url) { state in
+                    if let image = state.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.secondarySystemBackground))
+                    }
+                }
+                .frame(width: 160, height: 90)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.secondarySystemBackground))
+                    .frame(width: 160, height: 90)
+                    .overlay {
+                        Image(systemName: "play.rectangle")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(playlist.title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(2)
+
+                if let count = playlist.videoCount {
+                    Text(count)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: - バナー
