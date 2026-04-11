@@ -9,6 +9,14 @@ import Foundation
 import CryptoKit
 import YouTubeKit
 
+/// チャンネルタブの種類
+enum ChannelTab: String, CaseIterable {
+    case home = "ホーム"
+    case videos = "動画"
+    case live = "ライブ"
+    case playlists = "再生リスト"
+}
+
 /// チャンネル情報モデル
 struct ChannelInfo {
     let channelId: String
@@ -18,7 +26,6 @@ struct ChannelInfo {
     let videoCount: String?
     let avatarURL: URL?
     let bannerURL: URL?
-    let videos: [VideoItem]
 }
 
 /// ホームフィード・検索・関連動画を取得するクライアント。
@@ -31,6 +38,10 @@ struct ContentClient {
     var search: (String) async throws -> [VideoItem]
     var fetchRelated: (String) async throws -> [VideoItem]
     var fetchChannel: (String) async throws -> ChannelInfo
+    /// チャンネルタブの動画を取得（初回）
+    var fetchChannelTab: (_ channelId: String, _ tab: ChannelTab) async throws -> ([VideoItem], String?)
+    /// チャンネルタブのページネーション
+    var fetchChannelTabPage: (_ continuation: String) async throws -> ([VideoItem], String?)
 }
 
 // MARK: - モック（テスト用）
@@ -43,9 +54,11 @@ extension ContentClient {
         fetchPlaylistVideos: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         fetchRelated: @escaping (String) async throws -> [VideoItem] = { _ in [] },
-        fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil, videos: []) }
+        fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
+        fetchChannelTab: @escaping (String, ChannelTab) async throws -> ([VideoItem], String?) = { _, _ in ([], nil) },
+        fetchChannelTabPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage)
     }
 }
 
@@ -121,6 +134,25 @@ extension ContentClient {
             fetchChannel: { channelId in
                 let cookies = AuthState.shared.cookieString ?? ""
                 return try await ContentClient.fetchChannelViaInnertube(channelId: channelId, cookies: cookies)
+            },
+            fetchChannelTab: { channelId, tab in
+                let cookies = AuthState.shared.cookieString ?? ""
+                // タブに対応する params を設定
+                let params: String? = switch tab {
+                case .home: nil
+                case .videos: "EgZ2aWRlb3PyBgQKAjoA"
+                case .live: "EgdzdHJlYW1z8gYECgJ6AA%3D%3D"
+                case .playlists: "EglwbGF5bGlzdHPyBgQKAkIA"
+                }
+                return try await ContentClient.fetchChannelTabViaInnertube(
+                    channelId: channelId, params: params, cookies: cookies
+                )
+            },
+            fetchChannelTabPage: { continuation in
+                let cookies = AuthState.shared.cookieString ?? ""
+                return try await ContentClient.fetchBrowseContinuationViaInnertubeAPI(
+                    cookies: cookies, continuation: continuation
+                )
             }
         )
     }()
@@ -130,11 +162,60 @@ extension ContentClient {
 
 extension ContentClient {
 
-    /// Innertube /browse でチャンネル情報と動画一覧を取得する。
+    /// Innertube /browse でチャンネルヘッダー情報を取得する。
     private static func fetchChannelViaInnertube(channelId: String, cookies: String) async throws -> ChannelInfo {
-        let (videos, _) = try await fetchBrowseViaInnertubeAPI(browseId: channelId, cookies: cookies)
+        let json = try await callBrowseAPI(browseId: channelId, params: nil, cookies: cookies)
 
-        // チャンネルヘッダー情報を別途取得（/browse レスポンスのヘッダー部分）
+        // ヘッダー情報をパース（c4TabbedHeaderRenderer または pageHeaderRenderer）
+        let header = json["header"] as? [String: Any]
+        let c4 = header?["c4TabbedHeaderRenderer"] as? [String: Any]
+        let pageHeader = (header?["pageHeaderRenderer"] as? [String: Any])
+        let pageHeaderContent = (pageHeader?["content"] as? [String: Any])?["pageHeaderViewModel"] as? [String: Any]
+
+        let name = c4?["title"] as? String
+            ?? extractTextFromPageHeader(pageHeaderContent, key: "title")
+        let handle = (c4?["channelHandleText"] as? [String: Any])?["runs"] as? [[String: Any]]
+        let handleText = handle?.compactMap({ $0["text"] as? String }).joined()
+            ?? extractTextFromPageHeader(pageHeaderContent, key: "subtitle")
+        let subscriberCount = (c4?["subscriberCountText"] as? [String: Any])?["simpleText"] as? String
+            ?? extractMetadataFromPageHeader(pageHeaderContent, index: 0)
+        let videoCount = (c4?["videosCountText"] as? [String: Any])?["runs"] as? [[String: Any]]
+        let videoCountText = videoCount?.compactMap({ $0["text"] as? String }).joined()
+            ?? extractMetadataFromPageHeader(pageHeaderContent, index: 1)
+
+        let avatarThumbs = (c4?["avatar"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+        let pageAvatarImage = (pageHeaderContent?["image"] as? [String: Any])?["decoratedAvatarViewModel"] as? [String: Any]
+        let pageAvatarSources = ((pageAvatarImage?["avatar"] as? [String: Any])?["avatarViewModel"] as? [String: Any])?["image"] as? [String: Any]
+        let avatarSources = avatarThumbs ?? (pageAvatarSources?["sources"] as? [[String: Any]])
+        let avatarURL = ContentClient.imageURL(from: avatarSources?.last?["url"] as? String)
+
+        let bannerThumbs = (c4?["banner"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+        let pageBanner = (pageHeaderContent?["banner"] as? [String: Any])?["imageBannerViewModel"] as? [String: Any]
+        let pageBannerSources = (pageBanner?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
+        let bannerSources = bannerThumbs ?? pageBannerSources
+        let bannerURL = ContentClient.imageURL(from: bannerSources?.last?["url"] as? String)
+
+        return ChannelInfo(
+            channelId: channelId,
+            name: name,
+            handle: handleText,
+            subscriberCount: subscriberCount,
+            videoCount: videoCountText,
+            avatarURL: avatarURL,
+            bannerURL: bannerURL
+        )
+    }
+
+    /// チャンネルの特定タブを取得する（params で動画/ライブ/プレイリストを切り替え）。
+    private static func fetchChannelTabViaInnertube(channelId: String, params: String?, cookies: String) async throws -> ([VideoItem], String?) {
+        let json = try await callBrowseAPI(browseId: channelId, params: params, cookies: cookies)
+        let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
+        let continuation = extractContinuationToken(in: json)
+        return (videos, continuation)
+    }
+
+    /// Innertube /browse API を認証付きで呼び出す共通メソッド（params 対応）。
+    private static func callBrowseAPI(browseId: String, params: String?, cookies: String) async throws -> [String: Any] {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -156,8 +237,8 @@ extension ContentClient {
             request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
             request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
         }
-        let body: [String: Any] = [
-            "browseId": channelId,
+        var body: [String: Any] = [
+            "browseId": browseId,
             "context": ["client": [
                 "clientName": "WEB",
                 "clientVersion": "2.20241201.01.00",
@@ -165,62 +246,15 @@ extension ContentClient {
                 "gl": "JP"
             ]]
         ]
+        if let params { body["params"] = params }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
         let sessionConfig = URLSessionConfiguration.ephemeral
         sessionConfig.httpShouldSetCookies = false
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
         let (data, _) = try await session.data(for: request)
-        let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-
-        // ヘッダー情報をパース（c4TabbedHeaderRenderer または pageHeaderRenderer）
-        let header = json["header"] as? [String: Any]
-        let c4 = header?["c4TabbedHeaderRenderer"] as? [String: Any]
-        let pageHeader = (header?["pageHeaderRenderer"] as? [String: Any])
-        let pageHeaderContent = (pageHeader?["content"] as? [String: Any])?["pageHeaderViewModel"] as? [String: Any]
-
-        // チャンネル名
-        let name = c4?["title"] as? String
-            ?? extractTextFromPageHeader(pageHeaderContent, key: "title")
-
-        // ハンドル
-        let handle = (c4?["channelHandleText"] as? [String: Any])?["runs"] as? [[String: Any]]
-        let handleText = handle?.compactMap({ $0["text"] as? String }).joined()
-            ?? extractTextFromPageHeader(pageHeaderContent, key: "subtitle")
-
-        // 登録者数
-        let subscriberCount = (c4?["subscriberCountText"] as? [String: Any])?["simpleText"] as? String
-            ?? extractMetadataFromPageHeader(pageHeaderContent, index: 0)
-
-        // 動画数
-        let videoCount = (c4?["videosCountText"] as? [String: Any])?["runs"] as? [[String: Any]]
-        let videoCountText = videoCount?.compactMap({ $0["text"] as? String }).joined()
-            ?? extractMetadataFromPageHeader(pageHeaderContent, index: 1)
-
-        // アバター
-        let avatarThumbs = (c4?["avatar"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
-        let pageAvatarImage = (pageHeaderContent?["image"] as? [String: Any])?["decoratedAvatarViewModel"] as? [String: Any]
-        let pageAvatarSources = ((pageAvatarImage?["avatar"] as? [String: Any])?["avatarViewModel"] as? [String: Any])?["image"] as? [String: Any]
-        let avatarSources = avatarThumbs ?? (pageAvatarSources?["sources"] as? [[String: Any]])
-        let avatarURL = ContentClient.imageURL(from: avatarSources?.last?["url"] as? String)
-
-        // バナー
-        let bannerThumbs = (c4?["banner"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
-        let pageBanner = (pageHeaderContent?["banner"] as? [String: Any])?["imageBannerViewModel"] as? [String: Any]
-        let pageBannerSources = (pageBanner?["image"] as? [String: Any])?["sources"] as? [[String: Any]]
-        let bannerSources = bannerThumbs ?? pageBannerSources
-        let bannerURL = ContentClient.imageURL(from: bannerSources?.last?["url"] as? String)
-
-        return ChannelInfo(
-            channelId: channelId,
-            name: name,
-            handle: handleText,
-            subscriberCount: subscriberCount,
-            videoCount: videoCountText,
-            avatarURL: avatarURL,
-            bannerURL: bannerURL,
-            videos: videos
-        )
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
     /// pageHeaderViewModel からテキストを抽出するヘルパー
@@ -431,7 +465,7 @@ extension ContentClient {
     }
 
     /// Innertube /browse に continuation token を使って次ページを取得する。
-    private static func fetchBrowseContinuationViaInnertubeAPI(cookies: String, continuation: String) async throws -> ([VideoItem], String?) {
+    static func fetchBrowseContinuationViaInnertubeAPI(cookies: String, continuation: String) async throws -> ([VideoItem], String?) {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

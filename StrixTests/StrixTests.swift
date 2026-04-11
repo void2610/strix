@@ -408,19 +408,22 @@ struct ChannelViewModelTests {
             subscriberCount: "1万人",
             videoCount: "100本",
             avatarURL: nil,
-            bannerURL: nil,
-            videos: [
-                VideoItem(videoId: "v1", title: "動画1", channelId: "UC123", channelName: "テストチャンネル", thumbnailURL: nil, channelAvatarURL: nil, viewCountText: nil, timePostedText: nil)
-            ]
+            bannerURL: nil
         )
-        let client = ContentClient.mock(fetchChannel: { _ in mockInfo })
+        let mockVideos: [VideoItem] = [
+            VideoItem(videoId: "v1", title: "動画1", channelId: "UC123", channelName: "テストチャンネル", thumbnailURL: nil, channelAvatarURL: nil, viewCountText: nil, timePostedText: nil)
+        ]
+        let client = ContentClient.mock(
+            fetchChannel: { _ in mockInfo },
+            fetchChannelTab: { _, _ in (mockVideos, nil) }
+        )
         let vm = ChannelViewModel(contentClient: client)
 
         await vm.load(channelId: "UC123")
 
         #expect(vm.channelInfo?.name == "テストチャンネル")
         #expect(vm.channelInfo?.handle == "@test")
-        #expect(vm.channelInfo?.videos.count == 1)
+        #expect(vm.currentVideos.count == 1)
         #expect(!vm.isLoading)
         #expect(vm.error == nil)
     }

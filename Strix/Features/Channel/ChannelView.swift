@@ -14,7 +14,12 @@ import NukeUI
 @Observable
 final class ChannelViewModel {
     var channelInfo: ChannelInfo?
+    var selectedTab: ChannelTab = .home
+    var tabVideos: [ChannelTab: [VideoItem]] = [:]
+    var tabContinuations: [ChannelTab: String?] = [:]
     var isLoading = true
+    var isLoadingTab = false
+    var isLoadingMore = false
     var error: String?
 
     private let contentClient: ContentClient
@@ -23,13 +28,65 @@ final class ChannelViewModel {
         self.contentClient = contentClient
     }
 
+    /// チャンネルヘッダー + 初期タブ（ホーム）を読み込む
     func load(channelId: String) async {
         do {
-            channelInfo = try await contentClient.fetchChannel(channelId)
+            async let infoTask = contentClient.fetchChannel(channelId)
+            async let homeTask = contentClient.fetchChannelTab(channelId, .home)
+            let info = try await infoTask
+            let (homeVideos, homeContinuation) = try await homeTask
+            channelInfo = info
+            tabVideos[.home] = homeVideos
+            tabContinuations[.home] = homeContinuation
         } catch {
             self.error = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// タブ切り替え時にコンテンツを取得
+    func selectTab(_ tab: ChannelTab) async {
+        selectedTab = tab
+        // 既にデータがあればスキップ
+        if tabVideos[tab] != nil { return }
+        guard let channelId = channelInfo?.channelId else { return }
+        isLoadingTab = true
+        do {
+            let (videos, continuation) = try await contentClient.fetchChannelTab(channelId, tab)
+            tabVideos[tab] = videos
+            tabContinuations[tab] = continuation
+        } catch {
+            tabVideos[tab] = []
+        }
+        isLoadingTab = false
+    }
+
+    /// 現在のタブの次ページを読み込む
+    func loadMore() async {
+        guard let continuation = tabContinuations[selectedTab] as? String,
+              !isLoadingMore else { return }
+        isLoadingMore = true
+        do {
+            let (newVideos, nextToken) = try await contentClient.fetchChannelTabPage(continuation)
+            tabVideos[selectedTab, default: []].append(contentsOf: newVideos)
+            tabContinuations[selectedTab] = nextToken
+        } catch {
+            tabContinuations[selectedTab] = nil
+        }
+        isLoadingMore = false
+    }
+
+    /// 現在のタブの動画リスト
+    var currentVideos: [VideoItem] {
+        tabVideos[selectedTab] ?? []
+    }
+
+    /// 現在のタブに次ページがあるか
+    var hasMore: Bool {
+        if let token = tabContinuations[selectedTab] {
+            return token != nil
+        }
+        return false
     }
 }
 
@@ -76,26 +133,78 @@ struct ChannelView: View {
                 // チャンネルヘッダー
                 channelHeader(info: info)
 
+                // タブ切り替え
+                tabPicker
+
                 Divider()
-                    .padding(.vertical, 8)
 
-                // 動画一覧
-                if info.videos.isEmpty {
-                    ContentUnavailableView(
-                        "動画がありません",
-                        systemImage: "play.slash"
-                    )
-                    .padding(.top, 40)
-                } else {
-                    ForEach(info.videos) { video in
-                        NavigationLink(value: video.videoId) {
-                            VideoCardView(video: video)
-                        }
-                        .buttonStyle(.plain)
+                // タブコンテンツ
+                tabContent
+            }
+        }
+    }
 
-                        Divider()
+    // MARK: - タブ切り替え
+
+    private var tabPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(ChannelTab.allCases, id: \.self) { tab in
+                    Button {
+                        Task { await vm.selectTab(tab) }
+                    } label: {
+                        Text(tab.rawValue)
+                            .font(.subheadline)
+                            .fontWeight(vm.selectedTab == tab ? .semibold : .regular)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                vm.selectedTab == tab
+                                    ? Color.primary.opacity(0.1)
+                                    : Color(.secondarySystemBackground),
+                                in: Capsule()
+                            )
                     }
+                    .buttonStyle(.plain)
                 }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+    }
+
+    // MARK: - タブコンテンツ
+
+    @ViewBuilder
+    private var tabContent: some View {
+        if vm.isLoadingTab {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+        } else if vm.currentVideos.isEmpty {
+            ContentUnavailableView(
+                "コンテンツがありません",
+                systemImage: "play.slash"
+            )
+            .padding(.top, 40)
+        } else {
+            ForEach(vm.currentVideos) { video in
+                NavigationLink(value: video.videoId) {
+                    VideoCardView(video: video)
+                }
+                .buttonStyle(.plain)
+
+                Divider()
+            }
+
+            // ページネーション
+            if vm.hasMore || vm.isLoadingMore {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    .onAppear {
+                        Task { await vm.loadMore() }
+                    }
             }
         }
     }
@@ -121,7 +230,6 @@ struct ChannelView: View {
 
     private func channelHeader(info: ChannelInfo) -> some View {
         HStack(alignment: .top, spacing: 14) {
-            // アバター
             if let avatarURL = info.avatarURL {
                 LazyImage(url: avatarURL) { state in
                     if let image = state.image {
@@ -139,12 +247,10 @@ struct ChannelView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                // チャンネル名
                 Text(info.name ?? "チャンネル")
                     .font(.title3.bold())
                     .lineLimit(2)
 
-                // ハンドル・登録者数・動画数
                 let meta = [info.handle, info.subscriberCount, info.videoCount]
                     .compactMap { $0 }
                 if !meta.isEmpty {
