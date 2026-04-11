@@ -31,6 +31,12 @@ final class PlayerViewModel {
     /// 現在ロード済みの動画 ID（View の .task(id:) による二重ロードを防ぐ）
     private(set) var loadedVideoID: String?
 
+    // MARK: - プレイリスト再生モード
+    /// プレイリストの動画リスト（セット済みなら関連動画ではなくこのリスト順に再生する）
+    var playlistQueue: [VideoItem] = []
+    /// 現在再生中のプレイリスト内インデックス
+    var playlistIndex: Int = 0
+
     private let youtubeClient: YouTubeClient
     private let contentClient: ContentClient
     /// rate 変更監視トークン（再生再開時に playbackRate を復元するため）
@@ -159,14 +165,37 @@ final class PlayerViewModel {
 
     /// 再生終了時の処理（通知 + 定期監視の両方から呼ばれるため二重発火を防止）
     private func handlePlaybackEnded() {
-        // autoNextVideoID が既にセットされていたら処理済み
         guard autoNextVideoID == nil else { return }
         if isLooping {
             player?.seek(to: .zero)
             player?.play()
+        } else if !playlistQueue.isEmpty {
+            // プレイリスト再生モード: 次のトラックへ
+            let nextIndex = playlistIndex + 1
+            if nextIndex < playlistQueue.count {
+                playlistIndex = nextIndex
+                autoNextVideoID = playlistQueue[nextIndex].videoId
+            } else if autoPlayNext, let next = relatedVideos.first {
+                // プレイリスト末尾 → 関連動画にフォールバック
+                autoNextVideoID = next.videoId
+            }
         } else if autoPlayNext, let next = relatedVideos.first {
             autoNextVideoID = next.videoId
         }
+    }
+
+    /// プレイリスト内の前のトラックへ戻る
+    func playPrevious() {
+        guard !playlistQueue.isEmpty, playlistIndex > 0 else { return }
+        playlistIndex -= 1
+        autoNextVideoID = playlistQueue[playlistIndex].videoId
+    }
+
+    /// プレイリスト内の次のトラックへ進む
+    func playNext() {
+        guard !playlistQueue.isEmpty, playlistIndex + 1 < playlistQueue.count else { return }
+        playlistIndex += 1
+        autoNextVideoID = playlistQueue[playlistIndex].videoId
     }
 
     private func saveToHistory(videoID: String, info: VideoInfo, modelContext: ModelContext) {
@@ -181,6 +210,10 @@ final class PlayerViewModel {
 
 struct PlayerView: View {
     let videoID: String
+    /// プレイリスト再生モード用の動画リスト
+    let playlistQueue: [VideoItem]
+    let initialIndex: Int
+
     @State private var currentVideoID: String
 
     @State private var vm = PlayerViewModel()
@@ -188,8 +221,10 @@ struct PlayerView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
 
-    init(videoID: String) {
+    init(videoID: String, playlistQueue: [VideoItem] = [], initialIndex: Int = 0) {
         self.videoID = videoID
+        self.playlistQueue = playlistQueue
+        self.initialIndex = initialIndex
         self._currentVideoID = State(initialValue: videoID)
     }
 
@@ -213,6 +248,23 @@ struct PlayerView: View {
                             icon: "forward.end.fill",
                             isActive: vm.autoPlayNext
                         ) { vm.toggleAutoPlayNext() }
+
+                        // プレイリスト再生時: 前/次トラック
+                        if !vm.playlistQueue.isEmpty {
+                            playerControlButton(
+                                icon: "backward.fill",
+                                isActive: vm.playlistIndex > 0
+                            ) { vm.playPrevious() }
+
+                            Text("\(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            playerControlButton(
+                                icon: "forward.fill",
+                                isActive: vm.playlistIndex + 1 < vm.playlistQueue.count
+                            ) { vm.playNext() }
+                        }
 
                         Spacer()
 
@@ -246,9 +298,12 @@ struct PlayerView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .task(id: currentVideoID) {
-            // loadedVideoID が一致する場合は再ロードしない
-            // （PiP 復帰・ナビゲーションでのビュー再表示による二重ロードを防ぐ）
             guard vm.loadedVideoID != currentVideoID else { return }
+            // 初回のみプレイリストキューをセット
+            if vm.playlistQueue.isEmpty, !playlistQueue.isEmpty {
+                vm.playlistQueue = playlistQueue
+                vm.playlistIndex = initialIndex
+            }
             await vm.load(videoID: currentVideoID, modelContext: modelContext)
         }
         .onChange(of: vm.autoNextVideoID) { _, nextID in

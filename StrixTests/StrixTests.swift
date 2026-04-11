@@ -982,6 +982,72 @@ struct PlayerViewModelTests {
 
         #expect(!vm.isLoadingRelated)
     }
+
+    // MARK: - プレイリスト再生モード
+
+    @Test func playNextAdvancesIndex() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound }), contentClient: .mock())
+        vm.playlistQueue = [
+            VideoItem(videoId: "a", title: "A"),
+            VideoItem(videoId: "b", title: "B"),
+            VideoItem(videoId: "c", title: "C")
+        ]
+        vm.playlistIndex = 0
+
+        vm.playNext()
+        #expect(vm.playlistIndex == 1)
+        #expect(vm.autoNextVideoID == "b")
+
+        vm.autoNextVideoID = nil
+        vm.playNext()
+        #expect(vm.playlistIndex == 2)
+        #expect(vm.autoNextVideoID == "c")
+    }
+
+    @Test func playNextDoesNothingAtEnd() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound }), contentClient: .mock())
+        vm.playlistQueue = [
+            VideoItem(videoId: "a", title: "A"),
+            VideoItem(videoId: "b", title: "B")
+        ]
+        vm.playlistIndex = 1
+
+        vm.playNext()
+        #expect(vm.playlistIndex == 1)
+        #expect(vm.autoNextVideoID == nil)
+    }
+
+    @Test func playPreviousGoesBack() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound }), contentClient: .mock())
+        vm.playlistQueue = [
+            VideoItem(videoId: "a", title: "A"),
+            VideoItem(videoId: "b", title: "B"),
+            VideoItem(videoId: "c", title: "C")
+        ]
+        vm.playlistIndex = 2
+
+        vm.playPrevious()
+        #expect(vm.playlistIndex == 1)
+        #expect(vm.autoNextVideoID == "b")
+    }
+
+    @Test func playPreviousDoesNothingAtStart() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound }), contentClient: .mock())
+        vm.playlistQueue = [
+            VideoItem(videoId: "a", title: "A")
+        ]
+        vm.playlistIndex = 0
+
+        vm.playPrevious()
+        #expect(vm.playlistIndex == 0)
+        #expect(vm.autoNextVideoID == nil)
+    }
+
+    @Test func playlistQueueIsEmptyByDefault() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound }), contentClient: .mock())
+        #expect(vm.playlistQueue.isEmpty)
+        #expect(vm.playlistIndex == 0)
+    }
 }
 
 // MARK: - WatchedVideo ユニットテスト

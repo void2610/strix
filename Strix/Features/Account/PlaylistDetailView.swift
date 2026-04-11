@@ -54,9 +54,26 @@ struct PlaylistDetailView: View {
                 )
             } else {
                 List {
-                    ForEach(vm.videos) { video in
+                    // 全曲再生ボタン
+                    if let first = vm.videos.first {
                         NavigationLink {
-                            PlayerView(videoID: video.videoId)
+                            PlayerView(
+                                videoID: first.videoId,
+                                playlistQueue: vm.videos,
+                                initialIndex: 0
+                            )
+                        } label: {
+                            Label("すべて再生", systemImage: "play.fill")
+                        }
+                    }
+
+                    ForEach(Array(vm.videos.enumerated()), id: \.element.id) { index, video in
+                        NavigationLink {
+                            PlayerView(
+                                videoID: video.videoId,
+                                playlistQueue: vm.videos,
+                                initialIndex: index
+                            )
                         } label: {
                             VideoRowView(video: video)
                         }
