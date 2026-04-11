@@ -11,11 +11,11 @@ import NukeUI
 
 // MARK: - ViewModel
 
+@MainActor
 @Observable
 final class HomeViewModel {
     var videos: [VideoItem] = []
     var quickPlaylists: [YTPlaylist] = []
-    var history: [VideoItem] = []
     var isLoading = false
     var isLoadingMore = false
     var error: String?
@@ -41,8 +41,7 @@ final class HomeViewModel {
         defer { isLoading = false }
         async let feedTask: Void = loadFeed(generation: gen)
         async let playlistTask: Void = loadQuickPlaylists(generation: gen)
-        async let historyTask: Void = loadHistory(generation: gen)
-        _ = await (feedTask, playlistTask, historyTask)
+        _ = await (feedTask, playlistTask)
     }
 
     func reload() async {
@@ -51,7 +50,6 @@ final class HomeViewModel {
         isLoadingMore = false
         videos = []
         quickPlaylists = []
-        history = []
         continuationToken = nil
         await load()
     }
@@ -106,17 +104,6 @@ final class HomeViewModel {
         quickPlaylists = items
     }
 
-    private func loadHistory(generation: Int) async {
-        guard AuthState.shared.isSignedIn else { return }
-        do {
-            let videos = try await client.fetchHistoryVideos()
-            strixLog("loadHistory: \(videos.count)件")
-            guard generation == loadGeneration else { return }
-            history = videos
-        } catch {
-            strixLog("loadHistory エラー: \(error)")
-        }
-    }
 }
 
 // MARK: - View
@@ -132,11 +119,6 @@ struct HomeView: View {
                     // プレイリストクイックアクセス（ログイン済みかつデータあり）
                     if !vm.quickPlaylists.isEmpty {
                         playlistQuickAccessSection
-                    }
-
-                    // 視聴履歴（ログイン済みかつデータあり）
-                    if !vm.history.isEmpty {
-                        historySection
                     }
 
                     Divider()
@@ -199,27 +181,6 @@ struct HomeView: View {
             }
         }
         .padding(.top, 12)
-        .padding(.bottom, 8)
-    }
-
-    // MARK: - 視聴履歴
-
-    private var historySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("最近再生した動画")
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(vm.history.prefix(10)) { video in
-                        Button { path.append(video.videoId) } label: {
-                            HistoryThumbnailView(video: video)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-        }
         .padding(.bottom, 8)
     }
 

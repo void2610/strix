@@ -197,58 +197,59 @@ struct ContentClientParsingTests {
     }
 }
 
-// MARK: - HomeViewModel 視聴履歴ユニットテスト
+// MARK: - HistoryViewModel ユニットテスト
 
 @MainActor
-struct HomeViewModelHistoryTests {
+struct HistoryViewModelTests {
 
-    @Test func loadHistoryPopulatesHistory() async {
-        let mockVideo = VideoItem(
-            videoId: "hist1",
-            title: "履歴テスト動画",
-            channelName: "チャンネル",
-            thumbnailURL: nil,
-            channelAvatarURL: nil,
-            viewCountText: nil,
-            timePostedText: nil
-        )
-        let client = ContentClient.mock(
-            fetchHistoryVideos: { [mockVideo] }
-        )
-        let vm = HomeViewModel(client: client)
-        // AuthState をログイン済みに見せかけるためアカウントクライアントも mock
-        let accountClient = AccountClient.mock()
-        let vm2 = HomeViewModel(client: client, accountClient: accountClient)
-        // loadHistory を直接呼べないため load() 経由で検証は困難。
-        // mock の fetchHistoryVideos が呼ばれることを callCount で確認する。
-        var callCount = 0
-        let client2 = ContentClient.mock(
-            fetchHistoryVideos: {
-                callCount += 1
-                return [mockVideo]
-            }
-        )
-        _ = vm2  // suppress warning
-        _ = HomeViewModel(client: client2, accountClient: accountClient)
-        #expect(callCount == 0)  // load() 呼び前は 0
+    private func withSignedInAuthState(_ body: @MainActor () async throws -> Void) async rethrows {
+        let originalCookie = AuthState.shared.cookieString
+        AuthState.shared.cookieString = "SID=test"
+        defer { AuthState.shared.cookieString = originalCookie }
+        try await body()
     }
 
-    @Test func loadHistoryHandlesError() async {
-        let client = ContentClient.mock(
-            fetchHistoryVideos: { throw URLError(.notConnectedToInternet) }
-        )
-        let vm = HomeViewModel(client: client)
-        // エラーが発生しても isLoading が false に戻る
+    @Test func loadPopulatesVideosWhenSignedIn() async throws {
+        try await withSignedInAuthState {
+            let mockVideo = VideoItem(
+                videoId: "hist1",
+                title: "履歴テスト動画",
+                channelName: "チャンネル",
+                thumbnailURL: nil,
+                channelAvatarURL: nil,
+                viewCountText: nil,
+                timePostedText: nil
+            )
+            let contentClient = ContentClient.mock(
+                fetchHistoryVideos: { [mockVideo] }
+            )
+            let vm = HistoryViewModel(contentClient: contentClient)
+
+            await vm.load()
+
+            #expect(vm.videos.count == 1)
+            #expect(vm.videos.first?.videoId == "hist1")
+        }
+    }
+
+    @Test func loadHandlesError() async throws {
+        try await withSignedInAuthState {
+            let contentClient = ContentClient.mock(
+                fetchHistoryVideos: { throw URLError(.notConnectedToInternet) }
+            )
+            let vm = HistoryViewModel(contentClient: contentClient)
+
+            await vm.load()
+
+            #expect(!vm.isLoading)
+            #expect(vm.videos.isEmpty)
+            #expect(vm.error != nil)
+        }
+    }
+
+    @Test func loadSetsLoadingFalseAfterCompletion() async {
+        let vm = HistoryViewModel(contentClient: .mock())
         await vm.load()
-        #expect(!vm.isLoading)
-        // history はエラー時でも空のまま（クラッシュしない）
-        #expect(vm.history.isEmpty)
-    }
-
-    @Test func reloadClearsHistory() async {
-        let vm = HomeViewModel(client: .mock())
-        await vm.reload()
-        #expect(vm.history.isEmpty)  // mock は空を返す
         #expect(!vm.isLoading)
     }
 }

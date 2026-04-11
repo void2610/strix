@@ -6,24 +6,23 @@
 //
 
 import SwiftUI
-import YouTubeKit
 
+@MainActor
 @Observable
 final class HistoryViewModel {
-    var blocks: [HistoryResponse.HistoryBlock] = []
+    var videos: [VideoItem] = []
     var isLoading = true
     var error: Error?
 
-    private let accountClient: AccountClient
+    private let contentClient: ContentClient
 
-    init(accountClient: AccountClient = .live) {
-        self.accountClient = accountClient
+    init(contentClient: ContentClient = .live) {
+        self.contentClient = contentClient
     }
 
     func load() async {
         do {
-            let response = try await accountClient.fetchHistory()
-            blocks = response.videosAndTime
+            videos = try await contentClient.fetchHistoryVideos()
         } catch {
             self.error = error
         }
@@ -45,22 +44,20 @@ struct HistoryView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error.localizedDescription)
                 )
-            } else if vm.blocks.isEmpty {
+            } else if vm.videos.isEmpty {
                 ContentUnavailableView(
                     "視聴履歴がありません",
                     systemImage: "clock.arrow.circlepath"
                 )
             } else {
                 List {
-                    ForEach(vm.blocks) { block in
-                        Section(block.groupTitle) {
-                            ForEach(block.videosArray) { entry in
-                                NavigationLink(value: entry.video.videoId) {
-                                    VideoRowView(video: entry.video.toVideoItem)
-                                }
-                                .buttonStyle(.plain)
-                            }
+                    ForEach(vm.videos) { video in
+                        NavigationLink {
+                            PlayerView(videoID: video.videoId)
+                        } label: {
+                            VideoRowView(video: video)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .listStyle(.plain)

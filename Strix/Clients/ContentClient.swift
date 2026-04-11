@@ -209,8 +209,7 @@ extension ContentClient {
             }
             request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
             request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
-        }
-
+}
         let visitorData = deduplicateCookies(cookies)
             .components(separatedBy: "; ")
             .first(where: { $0.hasPrefix("VISITOR_INFO1_LIVE=") })
@@ -460,4 +459,3 @@ extension ContentClient {
         )
     }
 }
-
