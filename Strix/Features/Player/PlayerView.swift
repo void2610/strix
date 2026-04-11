@@ -28,6 +28,8 @@ final class PlayerViewModel {
     var autoPlayNext = true
     /// auto-next 時に View がセットした次動画 ID（View の onChange で消費される）
     var autoNextVideoID: String?
+    /// /next API から取得したチャンネルオーナーのアバター URL
+    var ownerAvatarURL: URL?
     /// 現在ロード済みの動画 ID（View の .task(id:) による二重ロードを防ぐ）
     private(set) var loadedVideoID: String?
 
@@ -67,6 +69,7 @@ final class PlayerViewModel {
         player = nil
         videoInfo = nil
         relatedVideos = []
+        ownerAvatarURL = nil
         isLoadingStream = true
         isLoadingRelated = true
         streamError = nil
@@ -140,7 +143,9 @@ final class PlayerViewModel {
 
     private func loadRelated(videoID: String) async {
         do {
-            relatedVideos = try await contentClient.fetchRelated(videoID)
+            let result = try await contentClient.fetchRelated(videoID)
+            relatedVideos = result.videos
+            ownerAvatarURL = result.ownerAvatarURL
         } catch {
             // 関連動画の失敗はサイレントに扱う
         }
@@ -388,10 +393,10 @@ struct PlayerView: View {
 
     /// 公式 YouTube 風のチャンネル行（アバター + 名前、タップでチャンネルページへ）
     private func channelRow(name: String, channelId: String?) -> some View {
-        // アバターURL: VideoInfo → 関連動画の同一チャンネル → 関連動画の先頭
-        let avatarURL = vm.videoInfo?.channelAvatarURL
+        // アバターURL: /next の videoOwnerRenderer → /player の endscreen → 関連動画の同一チャンネル
+        let avatarURL = vm.ownerAvatarURL
+            ?? vm.videoInfo?.channelAvatarURL
             ?? vm.relatedVideos.first(where: { $0.channelId == channelId })?.channelAvatarURL
-            ?? vm.relatedVideos.first?.channelAvatarURL
         let content = HStack(spacing: 10) {
             Group {
                 if let url = avatarURL {

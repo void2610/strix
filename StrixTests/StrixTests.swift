@@ -588,9 +588,42 @@ struct ContentClientTests {
     }
 
     @Test func fetchRelatedReturnsVideos() async throws {
-        let results = try await ContentClient.live.fetchRelated("jYg8wCT02FA")
-        // 関連動画は取れる場合と取れない場合がある（エラーにはならない）
-        #expect(results.allSatisfy { !$0.videoId.isEmpty })
+        let result = try await ContentClient.live.fetchRelated("jYg8wCT02FA")
+        #expect(result.videos.allSatisfy { !$0.videoId.isEmpty })
+        // /next の videoOwnerRenderer からアバターが取れるはず
+        #expect(result.ownerAvatarURL != nil)
+    }
+
+    @Test func extractOwnerAvatarURLFindsRenderer() {
+        let json: [String: Any] = [
+            "contents": [
+                "twoColumnWatchNextResults": [
+                    "results": [
+                        "results": [
+                            "contents": [
+                                ["videoOwnerRenderer": [
+                                    "thumbnail": [
+                                        "thumbnails": [
+                                            ["url": "https://yt3.ggpht.com/avatar_small", "width": 48, "height": 48],
+                                            ["url": "https://yt3.ggpht.com/avatar_large", "width": 176, "height": 176]
+                                        ]
+                                    ],
+                                    "title": ["runs": [["text": "テストチャンネル"]]]
+                                ]]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        let url = ContentClient.extractOwnerAvatarURL(from: json)
+        #expect(url?.absoluteString == "https://yt3.ggpht.com/avatar_large")
+    }
+
+    @Test func extractOwnerAvatarURLReturnsNilWhenMissing() {
+        let json: [String: Any] = ["empty": true]
+        let url = ContentClient.extractOwnerAvatarURL(from: json)
+        #expect(url == nil)
     }
 }
 

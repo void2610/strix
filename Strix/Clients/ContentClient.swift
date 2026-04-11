@@ -45,7 +45,8 @@ struct ContentClient {
     var fetchHistoryVideos: () async throws -> [VideoItem]
     var fetchPlaylistVideos: (String) async throws -> [VideoItem]
     var search: (String) async throws -> [VideoItem]
-    var fetchRelated: (String) async throws -> [VideoItem]
+    /// 関連動画と動画オーナーのアバター URL を返す
+    var fetchRelated: (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?)
     var fetchChannel: (String) async throws -> ChannelInfo
     /// チャンネルタブの動画を取得（初回）
     var fetchChannelTab: (_ channelId: String, _ tab: ChannelTab) async throws -> ([VideoItem], String?)
@@ -64,7 +65,7 @@ extension ContentClient {
         fetchHistoryVideos: @escaping () async throws -> [VideoItem] = { [] },
         fetchPlaylistVideos: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
-        fetchRelated: @escaping (String) async throws -> [VideoItem] = { _ in [] },
+        fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?) = { _ in ([], nil) },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
         fetchChannelTab: @escaping (String, ChannelTab) async throws -> ([VideoItem], String?) = { _, _ in ([], nil) },
         fetchChannelTabPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
@@ -142,7 +143,11 @@ extension ContentClient {
             },
             fetchRelated: { videoID in
                 let cookies = AuthState.shared.cookieString ?? ""
-                return try await ContentClient.fetchRelatedViaNextAPI(videoID: videoID, cookies: cookies)
+                let json = try await ContentClient.callNextAPI(params: ["videoId": videoID], cookies: cookies)
+                let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }.filter { $0.videoId != videoID }
+                // videoOwnerRenderer からチャンネルアバターを取得
+                let ownerAvatarURL = extractOwnerAvatarURL(from: json)
+                return (videos, ownerAvatarURL)
             },
             fetchChannel: { channelId in
                 let cookies = AuthState.shared.cookieString ?? ""
@@ -277,13 +282,22 @@ extension ContentClient {
     }
 
     /// JSON ツリーから lockupViewModel (PLAYLIST/ALBUM) をパースしてプレイリスト一覧を返す。
-    /// /next エンドポイントで関連動画を取得する。
-    static func fetchRelatedViaNextAPI(videoID: String, cookies: String) async throws -> [VideoItem] {
-        let json = try await callNextAPI(params: ["videoId": videoID], cookies: cookies)
-        // secondaryResults 内の lockupViewModel / videoRenderer をパース
-        let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
-        // 自分自身を除外
-        return videos.filter { $0.videoId != videoID }
+    /// /next レスポンスの videoOwnerRenderer からチャンネルアバター URL を抽出する。
+    static func extractOwnerAvatarURL(from json: Any) -> URL? {
+        if let dict = json as? [String: Any] {
+            if let vor = dict["videoOwnerRenderer"] as? [String: Any] {
+                let thumbs = (vor["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+                return imageURL(from: thumbs?.last?["url"] as? String)
+            }
+            for (_, v) in dict {
+                if let url = extractOwnerAvatarURL(from: v) { return url }
+            }
+        } else if let array = json as? [Any] {
+            for item in array {
+                if let url = extractOwnerAvatarURL(from: item) { return url }
+            }
+        }
+        return nil
     }
 
     /// /next API を共通ヘルパーで呼び出す。
