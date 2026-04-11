@@ -141,15 +141,8 @@ extension ContentClient {
                     .map { $0.toVideoItem }
             },
             fetchRelated: { videoID in
-                model.cookies = AuthState.shared.cookieString ?? ""
-                let (response, error) = await MoreVideoInfosResponse.sendRequest(
-                    youtubeModel: model,
-                    data: [.query: videoID]
-                )
-                if let error { throw error }
-                return (response?.recommendedVideos ?? [])
-                    .compactMap { $0 as? YTVideo }
-                    .map { $0.toVideoItem }
+                let cookies = AuthState.shared.cookieString ?? ""
+                return try await ContentClient.fetchRelatedViaNextAPI(videoID: videoID, cookies: cookies)
             },
             fetchChannel: { channelId in
                 let cookies = AuthState.shared.cookieString ?? ""
@@ -284,9 +277,17 @@ extension ContentClient {
     }
 
     /// JSON ツリーから lockupViewModel (PLAYLIST/ALBUM) をパースしてプレイリスト一覧を返す。
-    /// /next エンドポイントでミックスリスト・プレイリストの動画一覧を取得する。
-    /// playlistPanelVideoRenderer をパースする。
-    static func fetchMixViaNextAPI(playlistId: String, cookies: String) async throws -> [VideoItem] {
+    /// /next エンドポイントで関連動画を取得する。
+    static func fetchRelatedViaNextAPI(videoID: String, cookies: String) async throws -> [VideoItem] {
+        let json = try await callNextAPI(params: ["videoId": videoID], cookies: cookies)
+        // secondaryResults 内の lockupViewModel / videoRenderer をパース
+        let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
+        // 自分自身を除外
+        return videos.filter { $0.videoId != videoID }
+    }
+
+    /// /next API を共通ヘルパーで呼び出す。
+    private static func callNextAPI(params: [String: Any], cookies: String) async throws -> [String: Any] {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/next?prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -308,15 +309,13 @@ extension ContentClient {
             request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
             request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
         }
-        let body: [String: Any] = [
-            "playlistId": playlistId,
-            "context": ["client": [
-                "clientName": "WEB",
-                "clientVersion": "2.20241201.01.00",
-                "hl": "ja",
-                "gl": "JP"
-            ]]
-        ]
+        var body: [String: Any] = params
+        body["context"] = ["client": [
+            "clientName": "WEB",
+            "clientVersion": "2.20241201.01.00",
+            "hl": "ja",
+            "gl": "JP"
+        ]]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let sessionConfig = URLSessionConfiguration.ephemeral
@@ -324,9 +323,12 @@ extension ContentClient {
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
         let (data, _) = try await session.data(for: request)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
 
-        // playlistPanelVideoRenderer を再帰的に探索
+    /// /next エンドポイントでミックスリスト・プレイリストの動画一覧を取得する。
+    static func fetchMixViaNextAPI(playlistId: String, cookies: String) async throws -> [VideoItem] {
+        let json = try await callNextAPI(params: ["playlistId": playlistId], cookies: cookies)
         return parsePlaylistPanelRenderers(from: json)
     }
 

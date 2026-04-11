@@ -25,7 +25,7 @@ final class PlayerViewModel {
     /// ループ再生が有効かどうか
     var isLooping = false
     /// 次動画を自動再生するかどうか
-    var autoPlayNext = false
+    var autoPlayNext = true
     /// auto-next 時に View がセットした次動画 ID（View の onChange で消費される）
     var autoNextVideoID: String?
     /// 現在ロード済みの動画 ID（View の .task(id:) による二重ロードを防ぐ）
@@ -37,6 +37,8 @@ final class PlayerViewModel {
     private var rateObserver: Any?
     /// 動画終端監視トークン（ループ・自動再生で使用）
     private var endObserver: Any?
+    /// 再生位置の定期監視トークン（バックアップの終端検出用）
+    private var timeObserver: Any?
 
     init(youtubeClient: YouTubeClient = .live, contentClient: ContentClient = .live) {
         self.youtubeClient = youtubeClient
@@ -50,8 +52,10 @@ final class PlayerViewModel {
         loadedVideoID = videoID
         if let obs = rateObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = endObserver  { NotificationCenter.default.removeObserver(obs) }
+        if let obs = timeObserver, let p = player { p.removeTimeObserver(obs) }
         rateObserver = nil
         endObserver = nil
+        timeObserver = nil
         autoNextVideoID = nil
         player?.pause()
         player = nil
@@ -86,18 +90,24 @@ final class PlayerViewModel {
                     p.rate = self.playbackRate
                 }
             }
-            // 動画終端: ループ or 次動画自動再生
+            // 動画終端: ループ or 次動画自動再生（通知ベース）
             endObserver = NotificationCenter.default.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
                 object: avPlayer.currentItem,
                 queue: .main
             ) { [weak self] _ in
-                guard let self else { return }
-                if self.isLooping {
-                    self.player?.seek(to: .zero)
-                    self.player?.play()
-                } else if self.autoPlayNext, let next = self.relatedVideos.first {
-                    self.autoNextVideoID = next.videoId
+                self?.handlePlaybackEnded()
+            }
+            // バックアップ: 再生位置の定期監視で終端を検出（通知が来ない場合の保険）
+            let interval = CMTime(seconds: 1, preferredTimescale: 1)
+            timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+                guard let self, let item = self.player?.currentItem else { return }
+                let duration = item.duration
+                guard duration.isNumeric, duration.seconds > 0 else { return }
+                let remaining = duration.seconds - time.seconds
+                // 残り0.5秒以内 かつ 再生停止していたら終端扱い
+                if remaining < 0.5, self.player?.rate == 0, self.player?.currentItem?.status == .readyToPlay {
+                    self.handlePlaybackEnded()
                 }
             }
             avPlayer.play()
@@ -145,6 +155,18 @@ final class PlayerViewModel {
     /// 次動画自動再生のオン/オフを切り替える
     func toggleAutoPlayNext() {
         autoPlayNext.toggle()
+    }
+
+    /// 再生終了時の処理（通知 + 定期監視の両方から呼ばれるため二重発火を防止）
+    private func handlePlaybackEnded() {
+        // autoNextVideoID が既にセットされていたら処理済み
+        guard autoNextVideoID == nil else { return }
+        if isLooping {
+            player?.seek(to: .zero)
+            player?.play()
+        } else if autoPlayNext, let next = relatedVideos.first {
+            autoNextVideoID = next.videoId
+        }
     }
 
     private func saveToHistory(videoID: String, info: VideoInfo, modelContext: ModelContext) {
