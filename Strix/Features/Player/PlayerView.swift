@@ -217,6 +217,7 @@ struct PlayerView: View {
     @State private var currentVideoID: String
 
     @State private var vm = PlayerViewModel()
+    @State private var channelToOpen: String?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -297,6 +298,14 @@ struct PlayerView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: Binding(
+            get: { channelToOpen != nil },
+            set: { if !$0 { channelToOpen = nil } }
+        )) {
+            if let channelId = channelToOpen {
+                ChannelView(channelId: channelId)
+            }
+        }
         .task(id: currentVideoID) {
             guard vm.loadedVideoID != currentVideoID else { return }
             // 初回のみプレイリストキューをセット
@@ -416,7 +425,9 @@ struct PlayerView: View {
 
         return Group {
             if let channelId {
-                NavigationLink(value: ChannelDestination(channelId: channelId)) {
+                Button {
+                    channelToOpen = channelId
+                } label: {
                     content
                 }
                 .buttonStyle(.plain)
