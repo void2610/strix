@@ -82,28 +82,22 @@ extension ContentClient {
         let model = YouTubeModel()
         return ContentClient(
             fetchHome: {
-                let cookies = AuthState.shared.cookieString ?? ""
-                guard !cookies.isEmpty else { return ([], nil) }
-                return try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: "FEwhat_to_watch", cookies: cookies)
+                guard AuthState.shared.isSignedIn else { return ([], nil) }
+                return try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: "FEwhat_to_watch", cookies: "")
             },
             fetchHomePage: { continuation in
-                let cookies = AuthState.shared.cookieString ?? ""
-                guard !cookies.isEmpty else { return ([], nil) }
-                return try await ContentClient.fetchHomeNextPageViaInnertubeAPI(cookies: cookies, continuation: continuation)
+                return try await ContentClient.fetchHomeNextPageViaInnertubeAPI(cookies: "", continuation: continuation)
             },
             fetchHistoryVideos: {
-                let cookies = AuthState.shared.cookieString ?? ""
-                guard !cookies.isEmpty else { return [] }
-                let (videos, _) = try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: "FEhistory", cookies: cookies)
+                guard AuthState.shared.isSignedIn else { return [] }
+                let (videos, _) = try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: "FEhistory", cookies: "")
                 return videos
             },
             fetchPlaylistVideos: { playlistId in
-                let cookies = AuthState.shared.cookieString ?? ""
-                guard !cookies.isEmpty else { return [] }
 
                 // ミックスリスト（RD始まり）は /next エンドポイントで取得
                 if playlistId.hasPrefix("RD") {
-                    return try await ContentClient.fetchMixViaNextAPI(playlistId: playlistId, cookies: cookies)
+                    return try await ContentClient.fetchMixViaNextAPI(playlistId: playlistId, cookies: "")
                 }
 
                 // 通常プレイリスト: VLプレフィックス付き・なし両方を試す
@@ -116,19 +110,19 @@ extension ContentClient {
                 }()
 
                 for browseId in candidateBrowseIds {
-                    let (initialVideos, initialToken) = try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: browseId, cookies: cookies)
+                    let (initialVideos, initialToken) = try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: browseId, cookies: "")
                     if !initialVideos.isEmpty { return initialVideos }
 
                     var continuation = initialToken
                     while let token = continuation {
-                        let (videos, nextToken) = try await ContentClient.fetchBrowseContinuationViaInnertubeAPI(cookies: cookies, continuation: token)
+                        let (videos, nextToken) = try await ContentClient.fetchBrowseContinuationViaInnertubeAPI(cookies: "", continuation: token)
                         if !videos.isEmpty { return videos }
                         continuation = nextToken
                     }
                 }
 
                 // /browse で取れなかった場合も /next にフォールバック
-                return try await ContentClient.fetchMixViaNextAPI(playlistId: playlistId, cookies: cookies)
+                return try await ContentClient.fetchMixViaNextAPI(playlistId: playlistId, cookies: "")
             },
             search: { query in
                 model.cookies = AuthState.shared.cookieString ?? ""
@@ -142,7 +136,7 @@ extension ContentClient {
                     .map { $0.toVideoItem }
             },
             fetchRelated: { videoID in
-                let cookies = AuthState.shared.cookieString ?? ""
+                let cookies = ""
                 let json = try await ContentClient.callNextAPI(params: ["videoId": videoID], cookies: cookies)
                 let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }.filter { $0.videoId != videoID }
                 // videoOwnerRenderer からチャンネルアバターを取得
@@ -150,11 +144,11 @@ extension ContentClient {
                 return (videos, ownerAvatarURL)
             },
             fetchChannel: { channelId in
-                let cookies = AuthState.shared.cookieString ?? ""
+                let cookies = ""
                 return try await ContentClient.fetchChannelViaInnertube(channelId: channelId, cookies: cookies)
             },
             fetchChannelTab: { channelId, tab in
-                let cookies = AuthState.shared.cookieString ?? ""
+                let cookies = ""
                 // タブに対応する params を設定
                 let params: String? = switch tab {
                 case .home: nil
@@ -167,13 +161,13 @@ extension ContentClient {
                 )
             },
             fetchChannelTabPage: { continuation in
-                let cookies = AuthState.shared.cookieString ?? ""
+                let cookies = ""
                 return try await ContentClient.fetchBrowseContinuationViaInnertubeAPI(
                     cookies: cookies, continuation: continuation
                 )
             },
             fetchChannelPlaylists: { channelId in
-                let cookies = AuthState.shared.cookieString ?? ""
+                let cookies = ""
                 let params = "EglwbGF5bGlzdHPyBgQKAkIA"
                 let json = try await ContentClient.callBrowseAPI(browseId: channelId, params: params, cookies: cookies)
                 return ContentClient.parsePlaylistLockups(from: json)
@@ -244,31 +238,13 @@ extension ContentClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        if !cookies.isEmpty {
-            let deduped = deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
-        }
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
         var body: [String: Any] = [
             "browseId": browseId,
-            "context": ["client": [
-                "clientName": "WEB",
-                "clientVersion": "2.20241201.01.00",
-                "hl": "ja",
-                "gl": "JP"
-            ]]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
         ]
         if let params { body["params"] = params }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -306,30 +282,12 @@ extension ContentClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        if !cookies.isEmpty {
-            let deduped = deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
-        }
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
         var body: [String: Any] = params
-        body["context"] = ["client": [
-            "clientName": "WEB",
-            "clientVersion": "2.20241201.01.00",
-            "hl": "ja",
-            "gl": "JP"
-        ]]
+        body["context"] = ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let sessionConfig = URLSessionConfiguration.ephemeral
@@ -546,6 +504,18 @@ extension ContentClient {
         return order.compactMap { seen[$0] }.joined(separator: "; ")
     }
 
+    /// リクエストに Cookie + SAPISIDHASH 認証ヘッダーを適用する
+    static func applyAuth(to request: inout URLRequest) {
+        guard let cookies = AuthState.shared.cookieString, !cookies.isEmpty else { return }
+        let deduped = deduplicateCookies(cookies)
+        request.setValue(deduped, forHTTPHeaderField: "Cookie")
+        if let auth = buildSapisidHash(from: deduped) {
+            request.setValue(auth, forHTTPHeaderField: "Authorization")
+        }
+        request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
+    }
+
     /// SAPISID ハッシュを生成して Authorization ヘッダー用の文字列を返す。
     /// 形式: SAPISIDHASH <timestamp>_<SHA1(timestamp + " " + sapisid + " " + origin)>
     /// __Secure-3PAPISID が優先（なければ SAPISID にフォールバック）
@@ -574,44 +544,14 @@ extension ContentClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        if !cookies.isEmpty {
-            let deduped = deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            // YouTube 認証に必須のヘッダー（これがないと logged_in:0 になる）
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
-        }
-
-        // VISITOR_INFO1_LIVE から visitorData を取得してコンテキストに含める
-        let visitorData = deduplicateCookies(cookies)
-            .components(separatedBy: "; ")
-            .first(where: { $0.hasPrefix("VISITOR_INFO1_LIVE=") })
-            .map { String($0.dropFirst("VISITOR_INFO1_LIVE=".count)) }
-
-        var clientContext: [String: Any] = [
-            "clientName": "WEB",
-            "clientVersion": "2.20241201.01.00",
-            "hl": "ja",
-            "gl": "JP"
-        ]
-        if let vd = visitorData, !vd.isEmpty {
-            clientContext["visitorData"] = vd
-        }
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
 
         let body: [String: Any] = [
             "browseId": browseId,
-            "context": ["client": clientContext]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -640,41 +580,14 @@ extension ContentClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        if !cookies.isEmpty {
-            let deduped = deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
-}
-        let visitorData = deduplicateCookies(cookies)
-            .components(separatedBy: "; ")
-            .first(where: { $0.hasPrefix("VISITOR_INFO1_LIVE=") })
-            .map { String($0.dropFirst("VISITOR_INFO1_LIVE=".count)) }
-
-        var clientContext: [String: Any] = [
-            "clientName": "WEB",
-            "clientVersion": "2.20241201.01.00",
-            "hl": "ja",
-            "gl": "JP"
-        ]
-        if let vd = visitorData, !vd.isEmpty {
-            clientContext["visitorData"] = vd
-        }
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
 
         let body: [String: Any] = [
             "continuation": continuation,
-            "context": ["client": clientContext]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

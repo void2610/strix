@@ -17,8 +17,8 @@ final class AuthState {
     var cookieString: String?
     var isSignedIn: Bool { cookieString != nil }
 
-    /// ログイン時に使った WKWebsiteDataStore（同一アプリセッション内でのみ有効）。
-    /// アプリ再起動後は nil になるため、クッキーインジェクションにフォールバックする。
+    /// ログイン時に使った WKWebsiteDataStore。
+    /// .default() を使うことでデバイス信頼情報がアプリ再起動後も保持される。
     var dataStore: WKWebsiteDataStore?
 
     static let shared = AuthState()
@@ -30,9 +30,9 @@ final class AuthState {
     }
 
     /// ログイン完了後にクッキーと DataStore を保存する
-    func save(cookies: String, dataStore: WKWebsiteDataStore) {
+    func save(cookies: String, dataStore: WKWebsiteDataStore? = nil) {
         cookieString = cookies
-        self.dataStore = dataStore
+        if let dataStore { self.dataStore = dataStore }
         KeychainHelper.save(key: "yt_cookies", value: cookies)
     }
 
@@ -59,7 +59,6 @@ enum KeychainHelper {
             kSecValueData: data,
             kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
         ]
-        // 既存エントリを削除してから追加
         SecItemDelete(query as CFDictionary)
         SecItemAdd(query as CFDictionary, nil)
     }

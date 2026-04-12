@@ -78,7 +78,7 @@ extension YouTubeClient {
         request.setValue("5", forHTTPHeaderField: "X-Youtube-Client-Name")
         request.setValue("21.13.6", forHTTPHeaderField: "X-Youtube-Client-Version")
 
-        // IOS クライアントは Cookie のみ（SAPISIDHASH を送ると WEB 偽装と判定される）
+        // IOS クライアントは Cookie のみ
         if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
             request.setValue(ContentClient.deduplicateCookies(cookies), forHTTPHeaderField: "Cookie")
         }
@@ -119,7 +119,7 @@ extension YouTubeClient {
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
     }
 
-    // MARK: - WEB クライアント（adaptive/combined formats を返す）
+    // MARK: - WEB クライアント（Cookie 認証、combined formats を返す）
 
     private static func fetchWithWEB(videoID: String) async throws -> VideoInfo {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
@@ -135,8 +135,15 @@ extension YouTubeClient {
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
 
-        // 認証ヘッダー（WEB は Cookie + SAPISIDHASH が必須）
-        applyAuth(to: &request)
+        // Cookie + SAPISIDHASH 認証
+        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
+            let deduped = ContentClient.deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = ContentClient.buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        }
 
         let body: [String: Any] = [
             "videoId": videoID,
@@ -188,11 +195,9 @@ extension YouTubeClient {
         strixLog("player[WebPage] 開始: \(videoID)")
         let pageURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
 
-        // ログイン済みの DataStore を使って認証済み WKWebView を作成
+        // 永続 DataStore を使って認証済み WKWebView を作成
         let config = WKWebViewConfiguration()
-        if let dataStore = AuthState.shared.dataStore {
-            config.websiteDataStore = dataStore
-        }
+        config.websiteDataStore = AuthState.shared.dataStore ?? .default()
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
 
         // ページ読み込み
@@ -206,17 +211,6 @@ extension YouTubeClient {
     }
 
     // MARK: - 共通ヘルパー
-
-    /// 認証ヘッダーをリクエストに付与する
-    private static func applyAuth(to request: inout URLRequest) {
-        guard let cookies = AuthState.shared.cookieString, !cookies.isEmpty else { return }
-        let deduped = ContentClient.deduplicateCookies(cookies)
-        request.setValue(deduped, forHTTPHeaderField: "Cookie")
-        if let auth = ContentClient.buildSapisidHash(from: deduped) {
-            request.setValue(auth, forHTTPHeaderField: "Authorization")
-        }
-        request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-    }
 
     /// /player リクエストを送信し、レスポンス JSON を返す。再生不可ならエラーを投げる。
     private static func sendPlayerRequest(_ request: URLRequest) async throws -> [String: Any] {

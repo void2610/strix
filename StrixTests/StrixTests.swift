@@ -409,9 +409,9 @@ struct AccountViewModelTests {
 struct HistoryViewModelTests {
 
     private func withSignedInAuthState(_ body: @MainActor () async throws -> Void) async rethrows {
-        let originalCookie = AuthState.shared.cookieString
-        AuthState.shared.cookieString = "SID=test"
-        defer { AuthState.shared.cookieString = originalCookie }
+        let original = AuthState.shared.cookieString
+        AuthState.shared.cookieString = "SID=test; HSID=test; SSID=test"
+        defer { AuthState.shared.cookieString = original }
         try await body()
     }
 

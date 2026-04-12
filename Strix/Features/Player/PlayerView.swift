@@ -20,6 +20,8 @@ final class PlayerViewModel {
     var isLoadingStream = true
     var isLoadingRelated = true
     var streamError: Error?
+    /// YouTube のボット検出エラーかどうか
+    var isBotDetected = false
     /// 現在の再生速度（1.0 または 2.0）
     var playbackRate: Float = 1.0
     /// ループ再生が有効かどうか
@@ -73,6 +75,7 @@ final class PlayerViewModel {
         isLoadingStream = true
         isLoadingRelated = true
         streamError = nil
+        isBotDetected = false
         playbackRate = 1.0
 
         // ストリームと関連動画を並列取得
@@ -137,6 +140,9 @@ final class PlayerViewModel {
             saveToHistory(videoID: videoID, info: info, modelContext: modelContext)
         } catch {
             streamError = error
+            // ボット検出の判定（エラーメッセージに「bot」「ログイン」が含まれる場合）
+            let desc = error.localizedDescription.lowercased()
+            isBotDetected = desc.contains("bot") || desc.contains("ログイン") || desc.contains("sign in")
             isLoadingStream = false
         }
     }
@@ -223,6 +229,7 @@ struct PlayerView: View {
 
     @State private var vm = PlayerViewModel()
     @State private var channelToOpen: String?
+    @State private var showBotVerify = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -332,12 +339,19 @@ struct PlayerView: View {
             currentVideoID = nextID
         }
         .onDisappear {
-            // バックグラウンド移行時は onDisappear が誤発火することがあるため
-            // scenePhase が active のときだけ（= ナビゲーションで離脱したとき）停止する
             guard scenePhase == .active else { return }
             vm.player?.pause()
             NowPlayingManager.shared.stop()
             LiveActivityManager.shared.stop()
+        }
+        .sheet(isPresented: $showBotVerify) {
+            BotVerifyView {
+                // 認証完了後にリトライ
+                showBotVerify = false
+                Task {
+                    await vm.load(videoID: currentVideoID, modelContext: modelContext)
+                }
+            }
         }
     }
 
@@ -366,11 +380,25 @@ struct PlayerView: View {
                 ProgressView()
                     .tint(.white)
             } else if vm.streamError != nil {
-                ContentUnavailableView(
-                    "再生できません",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(vm.streamError?.localizedDescription ?? "")
-                )
+                VStack(spacing: 12) {
+                    ContentUnavailableView(
+                        "再生できません",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(vm.streamError?.localizedDescription ?? "")
+                    )
+                    // ボット検出の場合は認証ボタンを表示
+                    if vm.isBotDetected {
+                        Button {
+                            showBotVerify = true
+                        } label: {
+                            Label("YouTubeで認証する", systemImage: "globe")
+                                .font(.subheadline.bold())
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                                .background(.white.opacity(0.2), in: Capsule())
+                        }
+                    }
+                }
                 .colorScheme(.dark)
             } else if let player = vm.player {
                 AVPlayerLayerView(player: player)

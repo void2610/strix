@@ -111,7 +111,7 @@ extension AccountClient {
 
     /// Innertube /browse (WEB client) を認証付きで呼び出す共通メソッド。
     private static func callBrowseAPI(browseId: String, cookies: String) async throws -> [String: Any] {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w&prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -124,15 +124,7 @@ extension AccountClient {
             forHTTPHeaderField: "User-Agent"
         )
 
-        if !cookies.isEmpty {
-            let deduped = ContentClient.deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = ContentClient.buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
-        }
+        ContentClient.applyAuth(to: &request)
 
         let body: [String: Any] = [
             "browseId": browseId,
@@ -303,7 +295,7 @@ extension AccountClient {
 
     /// Innertube /account/account_menu (WEB client) でアカウント名・ハンドル・アバターを取得する。
     private static func fetchInfoViaInnertube(cookies: String) async throws -> AccountInfo {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/account/account_menu?prettyPrint=false")!
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/account/account_menu?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w&prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -316,15 +308,7 @@ extension AccountClient {
             forHTTPHeaderField: "User-Agent"
         )
 
-        if !cookies.isEmpty {
-            let deduped = ContentClient.deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = ContentClient.buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
-        }
+        ContentClient.applyAuth(to: &request)
 
         let body: [String: Any] = [
             "context": ["client": [
