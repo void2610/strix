@@ -119,22 +119,38 @@ strix/
 │   ├── Info.plist                   # 手動管理 Info.plist（UIBackgroundModes=audio 含む）
 │   ├── Assets.xcassets/
 │   ├── Models/
-│   │   └── WatchedVideo.swift       # SwiftData モデル（視聴履歴）
+│   │   ├── VideoItem.swift          # 軽量動画モデル（ホーム・検索・関連動画共通）
+│   │   ├── WatchedVideo.swift       # SwiftData モデル（視聴履歴）
+│   │   └── PinnedPlaylist.swift     # SwiftData モデル（ホーム画面プレイリスト選択）
 │   ├── Features/
-│   │   ├── RootTabView.swift        # タブ構成（ホーム・検索）
+│   │   ├── RootTabView.swift        # タブ構成（ホーム・検索・アカウント）
 │   │   ├── Home/
-│   │   │   └── HomeView.swift       # ホームフィード + URL入力 + 履歴
+│   │   │   ├── HomeView.swift       # ホームフィード + プレイリストクイックアクセス
+│   │   │   └── HomePlaylistEditView.swift  # ホーム表示プレイリスト選択画面
 │   │   ├── Search/
 │   │   │   └── SearchView.swift     # 動画検索
 │   │   ├── Player/
-│   │   │   └── PlayerView.swift     # AVPlayerViewController 再生 + 関連動画
+│   │   │   └── PlayerView.swift     # 動画再生（PiP・バックグラウンド・倍速・ループ・プレイリスト再生）
+│   │   ├── Channel/
+│   │   │   └── ChannelView.swift    # チャンネルページ（ホーム・動画・ライブ・再生リストタブ）
+│   │   ├── Account/
+│   │   │   ├── HistoryView.swift    # 視聴履歴
+│   │   │   └── PlaylistDetailView.swift  # プレイリスト動画一覧
+│   │   ├── Auth/
+│   │   │   ├── LoginView.swift      # WKWebView ログイン
+│   │   │   ├── BotVerifyView.swift  # ボット検出時の認証画面
+│   │   │   └── LogView.swift        # デバッグログ
 │   │   └── Components/
 │   │       └── VideoCardView.swift  # 共通カード・行ビュー
 │   ├── Clients/
-│   │   ├── YouTubeClient.swift      # ストリーム URL 取得（Innertube IOS client）
-│   │   └── ContentClient.swift      # ホーム（Innertube WEB client）/検索/関連動画（YouTubeKit）
+│   │   ├── YouTubeClient.swift      # ストリーム URL 取得（IOS → WEB → WebPage フォールバック）
+│   │   ├── ContentClient.swift      # ホーム/検索/関連動画/チャンネル/プレイリスト（Innertube WEB client）
+│   │   └── AccountClient.swift      # アカウント情報・ライブラリ（Innertube WEB client）
 │   └── Utilities/
-│       └── VideoID.swift            # URL・動画 ID パーサー
+│       ├── VideoID.swift            # URL・動画 ID パーサー
+│       ├── AppLogger.swift          # アプリ内ログ
+│       ├── NowPlayingManager.swift  # コントロールセンター表示
+│       └── LiveActivityManager.swift # ダイナミックアイランド
 ├── StrixTests/
 └── StrixUITests/
 ```
@@ -143,21 +159,39 @@ strix/
 
 | ライブラリ | バージョン | 用途 |
 |---|---|---|
-| YouTubeKit | 1.3.0 | ホーム/検索/関連動画フェッチ |
+| YouTubeKit | 1.3.0 | 検索（SearchResponse）のみ使用。他はすべて Innertube 直接呼び出し |
 | Nuke / NukeUI | 12.9.0 | サムネイル画像キャッシュ |
+
+## アーキテクチャ
+
+### 認証フロー
+- WKWebView（`.default()` 永続ストア）で Google ログイン → YouTube セッション Cookie 取得
+- 必須 Cookie（SID/HSID/SSID）検証後に Keychain 保存
+- デバイス信頼情報は `.default()` ストアで永続保持（再ログイン時 2FA 不要）
+
+### API クライアント戦略
+- **コンテンツ取得**: Innertube WEB クライアント + Cookie + SAPISIDHASH 認証
+- **ストリーム取得**: IOS クライアント（HLS）→ WEB クライアント（combined formats）→ WebPage（WKWebView で ytInitialPlayerResponse 抽出）の3段フォールバック
+- **関連動画**: Innertube `/next` API から lockupViewModel をパース（YouTubeKit の MoreVideoInfosResponse は壊れているため不使用）
+- **チャンネルアバター**: `/next` の videoOwnerRenderer → `/player` の endscreen → 関連動画の同一チャンネルから取得
+
+### パーサー
+- lockupViewModel（WEB 新形式）: `parseLockupViewModel` — チャンネル名/ID は `extractChannelInfo` で再帰探索
+- videoRenderer（WEB 旧形式）: `parseVideoRenderer`
+- videoWithContextModel（IOS 形式）: `parseVideoWithContextData`
+- プレイリスト: `parsePlaylistLockups`（LOCKUP_CONTENT_TYPE_PLAYLIST/ALBUM）
+- ミックスリスト: `/next` API の `playlistPanelVideoRenderer` をパース
+- 画像 URL: `imageURL(from:)` でプロトコル相対 URL（`//`）を `https:` に補正
 
 ## 注意事項
 
 - ターゲット: iOS 26.2+（Xcode 26.3 で作成）
 - Swift 6 strict concurrency 有効（`@MainActor` デフォルト）
-- **ストリーム取得**: YouTubeKit は使わず Innertube API を IOS クライアント (v21.13.6) で直接叩く
-  - `clientName: "IOS"`, `X-Youtube-Client-Name: 5` が必須
-  - iOS クライアントは通常動画でも `hlsManifestUrl`（M3U8）を返す
-- **ホームフィード**: `ContentClient.fetchHomeViaInnertubeAPI` で Innertube `/browse` (WEB client) を URLSession で直接呼ぶ
-  - 認証: `Cookie` ヘッダー直接設定 + `SAPISIDHASH` (`Authorization`) + `X-Goog-AuthUser: 0`（必須・欠落すると `logged_in:0`）
+- **ストリーム取得**: YouTubeKit は使わず Innertube API を IOS/WEB クライアントで直接叩く
+- **ホームフィード**: Innertube `/browse` (WEB client) を URLSession で直接呼ぶ
+  - 認証: `Cookie` + `SAPISIDHASH` (`Authorization`) + `X-Goog-AuthUser: 0`
   - `httpShouldSetCookies = false` の ephemeral session でシステムの Cookie 上書きを防止
-  - `__Secure-3PAPISID`（なければ `SAPISID`）から SHA1 ハッシュで SAPISIDHASH を計算（CryptoKit）
-  - WKWebView 由来の Cookie は同名が重複するため `deduplicateCookies`（後勝ち）で除去
-  - フォールバック順: Innertube browse API → YouTubeKit `HomeScreenResponse` → 検索（`人気 YouTube 日本 2025`）
-- **検索/関連動画**: YouTubeKit の `SearchResponse` / `MoreVideoInfosResponse` を使用
-- `VideoInfosResponse.streamingURL` は HLS manifest URL（ライブ配信専用ではなく IOS クライアントなら通常動画でも取得可）
+- **検索**: YouTubeKit の `SearchResponse` を使用（唯一の YouTubeKit 依存）
+- **関連動画**: Innertube `/next` API を直接呼び出し
+- **ボット検出対策**: WebPage フォールバック（WKWebView で YouTube ページを読み込み ytInitialPlayerResponse から抽出）+ BotVerifyView で手動 CAPTCHA 解決
+- **倍速設定**: UserDefaults に永続化。動画切り替え・PiP・アプリ再起動でも維持

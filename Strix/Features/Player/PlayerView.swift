@@ -37,6 +37,10 @@ final class PlayerViewModel {
     var autoNextVideoID: String?
     /// /next API から取得したチャンネルオーナーのアバター URL
     var ownerAvatarURL: URL?
+    /// 動画の説明欄データ
+    var videoDescription: String?
+    var viewCountText: String?
+    var publishDateText: String?
     /// 現在ロード済みの動画 ID（View の .task(id:) による二重ロードを防ぐ）
     private(set) var loadedVideoID: String?
 
@@ -77,6 +81,9 @@ final class PlayerViewModel {
         videoInfo = nil
         relatedVideos = []
         ownerAvatarURL = nil
+        videoDescription = nil
+        viewCountText = nil
+        publishDateText = nil
         isLoadingStream = true
         isLoadingRelated = true
         streamError = nil
@@ -161,6 +168,9 @@ final class PlayerViewModel {
             let result = try await contentClient.fetchRelated(videoID)
             relatedVideos = result.videos
             ownerAvatarURL = result.ownerAvatarURL
+            videoDescription = result.description
+            viewCountText = result.viewCount
+            publishDateText = result.publishDate
         } catch {
             // 関連動画の失敗はサイレントに扱う
         }
@@ -239,6 +249,7 @@ struct PlayerView: View {
     @State private var vm = PlayerViewModel()
     @State private var channelToOpen: String?
     @State private var showBotVerify = false
+    @State private var showFullDescription = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -340,6 +351,7 @@ struct PlayerView: View {
                 vm.playlistQueue = playlistQueue
                 vm.playlistIndex = initialIndex
             }
+            showFullDescription = false
             await vm.load(videoID: currentVideoID, modelContext: modelContext)
         }
         .onChange(of: vm.autoNextVideoID) { _, nextID in
@@ -419,13 +431,58 @@ struct PlayerView: View {
 
     private func videoMeta(info: VideoInfo) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // タイトル
-            Text(info.title)
-                .font(.headline)
-                .lineLimit(3)
+            // タイトル・視聴回数・説明文（タップで展開/折りたたみ）
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showFullDescription.toggle()
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    // タイトル
+                    Text(info.title)
+                        .font(.headline)
+                        .lineLimit(showFullDescription ? nil : 2)
+                        .multilineTextAlignment(.leading)
+
+                    // 視聴回数・投稿日
+                    if vm.viewCountText != nil || vm.publishDateText != nil {
+                        let parts = [vm.viewCountText, vm.publishDateText].compactMap { $0 }
+                        HStack(spacing: 4) {
+                            Text(parts.joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if !showFullDescription {
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    // 説明文（展開時のみ）
+                    if showFullDescription, let desc = vm.videoDescription, !desc.isEmpty {
+                        Text(desc)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+
+                        HStack {
+                            Spacer()
+                            Image(systemName: "chevron.up")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.top, 4)
+                    }
+                }
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(showFullDescription ? Color(.secondarySystemBackground).opacity(0.5) : .clear, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, showFullDescription ? 8 : 0)
+            }
+            .buttonStyle(.plain)
 
             // チャンネル行（アバター + チャンネル名）
             if let channelName = info.channelName {

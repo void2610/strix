@@ -69,16 +69,45 @@ struct VideoCardView: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let url = video.thumbnailURL {
-            LazyImage(url: url) { state in
-                if let image = state.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    thumbnailPlaceholder
+        ZStack(alignment: .trailing) {
+            if let url = video.thumbnailURL {
+                LazyImage(url: url) { state in
+                    if let image = state.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        thumbnailPlaceholder
+                    }
+                }
+            } else {
+                thumbnailPlaceholder
+            }
+
+            // ミックスリスト・プレイリストのオーバーレイ
+            if video.playlistId != nil {
+                HStack(spacing: 0) {
+                    // 左側のグラデーション
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.7)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 40)
+
+                    // 右側の背景 + アイコン
+                    Color.black.opacity(0.7)
+                        .overlay {
+                            VStack(spacing: 6) {
+                                Image(systemName: "list.triangle")
+                                    .font(.title2)
+                                    .foregroundStyle(.white)
+                                Text("MIX")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        .frame(width: 80)
                 }
             }
-        } else {
-            thumbnailPlaceholder
         }
     }
 

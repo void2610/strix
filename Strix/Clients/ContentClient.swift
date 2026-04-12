@@ -45,8 +45,8 @@ struct ContentClient {
     var fetchHistoryVideos: () async throws -> [VideoItem]
     var fetchPlaylistVideos: (String) async throws -> [VideoItem]
     var search: (String) async throws -> [VideoItem]
-    /// 関連動画と動画オーナーのアバター URL を返す
-    var fetchRelated: (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?)
+    /// 関連動画・動画オーナーアバター・説明欄データを返す
+    var fetchRelated: (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?)
     var fetchChannel: (String) async throws -> ChannelInfo
     /// チャンネルタブの動画を取得（初回）
     var fetchChannelTab: (_ channelId: String, _ tab: ChannelTab) async throws -> ([VideoItem], String?)
@@ -65,7 +65,7 @@ extension ContentClient {
         fetchHistoryVideos: @escaping () async throws -> [VideoItem] = { [] },
         fetchPlaylistVideos: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
-        fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?) = { _ in ([], nil) },
+        fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?) = { _ in ([], nil, nil, nil, nil) },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
         fetchChannelTab: @escaping (String, ChannelTab) async throws -> ([VideoItem], String?) = { _, _ in ([], nil) },
         fetchChannelTabPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
@@ -139,9 +139,10 @@ extension ContentClient {
                 let cookies = ""
                 let json = try await ContentClient.callNextAPI(params: ["videoId": videoID], cookies: cookies)
                 let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }.filter { $0.videoId != videoID }
-                // videoOwnerRenderer からチャンネルアバターを取得
                 let ownerAvatarURL = extractOwnerAvatarURL(from: json)
-                return (videos, ownerAvatarURL)
+                // 説明欄データを抽出
+                let (desc, viewCount, publishDate) = extractVideoDescription(from: json)
+                return (videos, ownerAvatarURL, desc, viewCount, publishDate)
             },
             fetchChannel: { channelId in
                 let cookies = ""
@@ -258,6 +259,83 @@ extension ContentClient {
     }
 
     /// JSON ツリーから lockupViewModel (PLAYLIST/ALBUM) をパースしてプレイリスト一覧を返す。
+    /// /next レスポンスから動画説明欄データ（説明文・視聴回数・投稿日）を抽出する。
+    static func extractVideoDescription(from json: Any) -> (description: String?, viewCount: String?, publishDate: String?) {
+        var description: String?
+        var viewCount: String?
+        var publishDate: String?
+
+        guard let dict = json as? [String: Any] else { return (nil, nil, nil) }
+
+        // structuredDescriptionContentRenderer から取得
+        func findStructured(in obj: Any) {
+            if let d = obj as? [String: Any] {
+                if let sdcr = d["structuredDescriptionContentRenderer"] as? [String: Any],
+                   let items = sdcr["items"] as? [[String: Any]] {
+                    for item in items {
+                        // 説明文ヘッダー（視聴回数・投稿日）
+                        if let hdr = item["videoDescriptionHeaderRenderer"] as? [String: Any] {
+                            let viewRuns = (hdr["views"] as? [String: Any])?["simpleText"] as? String
+                            if let v = viewRuns { viewCount = v }
+                            let dateText = (hdr["publishDate"] as? [String: Any])?["simpleText"] as? String
+                            if let d = dateText { publishDate = d }
+                        }
+                        // 説明文本文
+                        if let body = item["expandableVideoDescriptionBodyRenderer"] as? [String: Any] {
+                            let content = (body["attributedDescriptionBodyText"] as? [String: Any])?["content"] as? String
+                                ?? (body["descriptionBodyText"] as? [String: Any])?["content"] as? String
+                            if let c = content { description = c }
+                        }
+                    }
+                    return
+                }
+                for (_, v) in d { findStructured(in: v) }
+            } else if let a = obj as? [Any] {
+                for item in a { findStructured(in: item) }
+            }
+        }
+        findStructured(in: dict)
+
+        // フォールバック: videoPrimaryInfoRenderer / videoSecondaryInfoRenderer
+        if viewCount == nil || publishDate == nil {
+            func findPrimary(in obj: Any) {
+                if let d = obj as? [String: Any] {
+                    if let vpir = d["videoPrimaryInfoRenderer"] as? [String: Any] {
+                        if viewCount == nil {
+                            let vcr = (vpir["viewCount"] as? [String: Any])?["videoViewCountRenderer"] as? [String: Any]
+                            viewCount = (vcr?["viewCount"] as? [String: Any])?["simpleText"] as? String
+                        }
+                        if publishDate == nil {
+                            publishDate = (vpir["dateText"] as? [String: Any])?["simpleText"] as? String
+                        }
+                        return
+                    }
+                    for (_, v) in d { findPrimary(in: v) }
+                } else if let a = obj as? [Any] {
+                    for item in a { findPrimary(in: item) }
+                }
+            }
+            findPrimary(in: dict)
+        }
+
+        if description == nil {
+            func findSecondary(in obj: Any) {
+                if let d = obj as? [String: Any] {
+                    if let vsir = d["videoSecondaryInfoRenderer"] as? [String: Any] {
+                        description = (vsir["attributedDescription"] as? [String: Any])?["content"] as? String
+                        return
+                    }
+                    for (_, v) in d { findSecondary(in: v) }
+                } else if let a = obj as? [Any] {
+                    for item in a { findSecondary(in: item) }
+                }
+            }
+            findSecondary(in: dict)
+        }
+
+        return (description, viewCount, publishDate)
+    }
+
     /// /next レスポンスの videoOwnerRenderer からチャンネルアバター URL を抽出する。
     static func extractOwnerAvatarURL(from json: Any) -> URL? {
         if let dict = json as? [String: Any] {
@@ -431,7 +509,7 @@ extension ContentClient {
     private static func findChannelBrowseEndpoints(in json: Any, name: inout String?, id: inout String?) {
         guard id == nil else { return }
         if let dict = json as? [String: Any] {
-            // "content" + "commandRuns" パターン: テキストとチャンネルリンクが同じオブジェクト内にある
+            // "content" + "commandRuns" パターン
             if let content = dict["content"] as? String,
                let cmdRuns = dict["commandRuns"] as? [[String: Any]] {
                 for cmdRun in cmdRuns {
@@ -443,7 +521,7 @@ extension ContentClient {
                     }
                 }
             }
-            // "runs" パターン: runs 配列内にテキストとナビゲーションがある
+            // "runs" パターン
             if let runs = dict["runs"] as? [[String: Any]] {
                 for run in runs {
                     if let text = run["text"] as? String,
@@ -453,6 +531,31 @@ extension ContentClient {
                         id = bid
                         return
                     }
+                }
+            }
+            // decoratedAvatarViewModel パターン（関連動画の lockupViewModel で使用）
+            // a11yLabel からチャンネル名、rendererContext から browseId を取得
+            if let dav = dict["decoratedAvatarViewModel"] as? [String: Any] {
+                let a11y = dav["a11yLabel"] as? String
+                let rc = (dav["rendererContext"] as? [String: Any])?["commandContext"] as? [String: Any]
+                let browse = ((rc?["onTap"] as? [String: Any])?["innertubeCommand"] as? [String: Any])?["browseEndpoint"] as? [String: Any]
+                if let bid = browse?["browseId"] as? String, bid.hasPrefix("UC") {
+                    id = bid
+                    // a11yLabel: 「チャンネル「XXX」に移動します」からチャンネル名を抽出
+                    if let a11y, let start = a11y.firstIndex(of: "「"), let end = a11y.lastIndex(of: "」") {
+                        let nameStart = a11y.index(after: start)
+                        if nameStart < end {
+                            name = String(a11y[nameStart..<end])
+                        }
+                    }
+                    return
+                }
+            }
+            // metadataParts パターン（metadataRowViewModel なし、直接 metadataParts がある場合）
+            if let parts = dict["metadataParts"] as? [[String: Any]], id == nil {
+                // 最初の text.content をチャンネル名候補として保持（後で browseId と合わせて確定）
+                if name == nil, let firstText = (parts.first?["text"] as? [String: Any])?["content"] as? String {
+                    name = firstText
                 }
             }
             for (_, value) in dict {
