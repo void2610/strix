@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import WebKit
 
 /// Innertube API を呼び出して動画ストリームを取得するクライアント。
 /// IOS（認証付き）→ WEB（認証付き）の順にフォールバックする。
@@ -41,10 +42,11 @@ enum YouTubeClientError: LocalizedError {
 extension YouTubeClient {
     static let live = YouTubeClient(
         fetchVideo: { videoID in
-            // IOS → WEB の順にフォールバック（両方認証付き）
+            // IOS → WEB → WebPage(WKWebView) の順にフォールバック
             let strategies: [(String, () async throws -> VideoInfo)] = [
                 ("IOS", { try await fetchWithIOS(videoID: videoID) }),
-                ("WEB", { try await fetchWithWEB(videoID: videoID) })
+                ("WEB", { try await fetchWithWEB(videoID: videoID) }),
+                ("WebPage", { try await fetchWithWebPage(videoID: videoID) })
             ]
             var lastError: Error = YouTubeClientError.streamNotFound
 
@@ -76,8 +78,10 @@ extension YouTubeClient {
         request.setValue("5", forHTTPHeaderField: "X-Youtube-Client-Name")
         request.setValue("21.13.6", forHTTPHeaderField: "X-Youtube-Client-Version")
 
-        // 認証ヘッダー
-        applyAuth(to: &request)
+        // IOS クライアントは Cookie のみ（SAPISIDHASH を送ると WEB 偽装と判定される）
+        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
+            request.setValue(ContentClient.deduplicateCookies(cookies), forHTTPHeaderField: "Cookie")
+        }
 
         let body: [String: Any] = [
             "videoId": videoID,
@@ -177,6 +181,30 @@ extension YouTubeClient {
         throw YouTubeClientError.streamNotFound
     }
 
+    // MARK: - WebPage 方式（WKWebView でページを読み込んでストリーム URL を取得）
+
+    @MainActor
+    private static func fetchWithWebPage(videoID: String) async throws -> VideoInfo {
+        strixLog("player[WebPage] 開始: \(videoID)")
+        let pageURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
+
+        // ログイン済みの DataStore を使って認証済み WKWebView を作成
+        let config = WKWebViewConfiguration()
+        if let dataStore = AuthState.shared.dataStore {
+            config.websiteDataStore = dataStore
+        }
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
+
+        // ページ読み込み
+        return try await withCheckedThrowingContinuation { continuation in
+            let delegate = WebPagePlayerDelegate(videoID: videoID, continuation: continuation)
+            webView.navigationDelegate = delegate
+            // delegate の参照を保持
+            objc_setAssociatedObject(webView, "delegate", delegate, .OBJC_ASSOCIATION_RETAIN)
+            webView.load(URLRequest(url: pageURL))
+        }
+    }
+
     // MARK: - 共通ヘルパー
 
     /// 認証ヘッダーをリクエストに付与する
@@ -247,5 +275,134 @@ extension YouTubeClient {
         }
 
         return (title, thumbnailURL, channelId, channelName, channelAvatarURL)
+    }
+}
+
+// MARK: - WKWebView ページ読み込みデリゲート
+
+/// YouTube ページを読み込んで ytInitialPlayerResponse から動画情報を抽出するデリゲート。
+private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
+    let videoID: String
+    private var continuation: CheckedContinuation<VideoInfo, Error>?
+    private var hasResolved = false
+
+    init(videoID: String, continuation: CheckedContinuation<VideoInfo, Error>) {
+        self.videoID = videoID
+        self.continuation = continuation
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard !hasResolved else { return }
+
+        // JavaScript でページから ytInitialPlayerResponse を抽出
+        let js = """
+        (function() {
+            try {
+                if (typeof ytInitialPlayerResponse !== 'undefined') {
+                    return JSON.stringify(ytInitialPlayerResponse);
+                }
+                var scripts = document.querySelectorAll('script');
+                for (var i = 0; i < scripts.length; i++) {
+                    var text = scripts[i].textContent;
+                    var match = text.match(/var ytInitialPlayerResponse\\s*=\\s*(\\{.+?\\});/);
+                    if (match) return match[1];
+                    match = text.match(/ytInitialPlayerResponse\\s*=\\s*(\\{.+?\\});/);
+                    if (match) return match[1];
+                }
+                return null;
+            } catch(e) { return null; }
+        })();
+        """
+
+        webView.evaluateJavaScript(js) { [weak self] result, error in
+            guard let self, !self.hasResolved else { return }
+
+            guard let jsonString = result as? String,
+                  let jsonData = jsonString.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                // ページ読み込み完了時にまだ取得できない場合は少し待って再試行
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.retryExtraction(webView: webView)
+                }
+                return
+            }
+
+            self.resolveWithJSON(json)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        resolve(with: .failure(YouTubeClientError.networkError(error)))
+    }
+
+    private func retryExtraction(webView: WKWebView) {
+        guard !hasResolved else { return }
+
+        let js = """
+        (function() {
+            try {
+                if (typeof ytInitialPlayerResponse !== 'undefined') {
+                    return JSON.stringify(ytInitialPlayerResponse);
+                }
+                return null;
+            } catch(e) { return null; }
+        })();
+        """
+
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let self, !self.hasResolved else { return }
+            guard let jsonString = result as? String,
+                  let jsonData = jsonString.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                self.resolve(with: .failure(YouTubeClientError.streamNotFound))
+                return
+            }
+            self.resolveWithJSON(json)
+        }
+    }
+
+    private func resolveWithJSON(_ json: [String: Any]) {
+        let playability = json["playabilityStatus"] as? [String: Any]
+        let status = playability?["status"] as? String ?? ""
+        if status != "OK" {
+            let reason = playability?["reason"] as? String ?? status
+            resolve(with: .failure(YouTubeClientError.notPlayable(reason)))
+            return
+        }
+
+        let videoDetails = json["videoDetails"] as? [String: Any]
+        let title = videoDetails?["title"] as? String ?? videoID
+        let thumbnails = (videoDetails?["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
+        let thumbnailURL = thumbnails?.last?["url"] as? String ?? ""
+        let channelId = videoDetails?["channelId"] as? String
+        let channelName = videoDetails?["author"] as? String
+
+        let streamingData = json["streamingData"] as? [String: Any]
+
+        // HLS
+        if let hlsString = streamingData?["hlsManifestUrl"] as? String,
+           let streamURL = URL(string: hlsString) {
+            resolve(with: .success(VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
+            return
+        }
+
+        // combined formats
+        if let formats = streamingData?["formats"] as? [[String: Any]],
+           let best = formats.last, let urlStr = best["url"] as? String, let streamURL = URL(string: urlStr) {
+            resolve(with: .success(VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
+            return
+        }
+
+        resolve(with: .failure(YouTubeClientError.streamNotFound))
+    }
+
+    private func resolve(with result: Result<VideoInfo, Error>) {
+        guard !hasResolved else { return }
+        hasResolved = true
+        switch result {
+        case .success(let info): continuation?.resume(returning: info)
+        case .failure(let error): continuation?.resume(throwing: error)
+        }
+        continuation = nil
     }
 }
