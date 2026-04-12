@@ -96,17 +96,17 @@ final class PlayerViewModel {
         isBotDetected = false
         // playbackRate はリセットしない（ユーザーの倍速設定を維持）
 
-        // ストリーム・関連動画・音声URL を並列取得
+        // ストリームと関連動画を並列取得
         async let streamTask: Void = loadStream(videoID: videoID, modelContext: modelContext)
         async let relatedTask: Void = loadRelated(videoID: videoID)
-        async let audioTask: Void = loadAudioOnlyURL(videoID: videoID)
-        _ = await (streamTask, relatedTask, audioTask)
+        _ = await (streamTask, relatedTask)
     }
 
     private func loadStream(videoID: String, modelContext: ModelContext) async {
         do {
             let info = try await youtubeClient.fetchVideo(videoID)
             videoInfo = info
+            audioOnlyURL = info.audioOnlyURL
             let avPlayer = AVPlayer(url: info.streamURL)
             player = avPlayer
             // PiP コントロールで再生再開すると rate が 1.0 に戻るため、
@@ -182,44 +182,6 @@ final class PlayerViewModel {
             // 関連動画の失敗はサイレントに扱う
         }
         isLoadingRelated = false
-    }
-
-    /// WEB クライアントから音声のみ URL を取得する（IOS クライアントは HLS のみで adaptiveFormats を返さないため）
-    private func loadAudioOnlyURL(videoID: String) async {
-        // WEB クライアントで /player を叩いて adaptiveFormats から音声 URL を取得
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
-            let deduped = ContentClient.deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = ContentClient.buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-        }
-        let body: [String: Any] = [
-            "videoId": videoID,
-            "contentCheckOk": true,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        guard let (data, _) = try? await URLSession(configuration: sessionConfig).data(for: request),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let adaptiveFormats = (json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]] else { return }
-
-        let audioFormats = adaptiveFormats.filter { ($0["mimeType"] as? String)?.hasPrefix("audio/") == true }
-        let best = audioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
-        if let urlStr = best?["url"] as? String, let audioURL = URL(string: urlStr) {
-            audioOnlyURL = audioURL
-        }
     }
 
     /// 再生速度を 1.0 → 2.0 → 1.0 の順に切り替える
