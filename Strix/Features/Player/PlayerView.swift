@@ -22,8 +22,13 @@ final class PlayerViewModel {
     var streamError: Error?
     /// YouTube のボット検出エラーかどうか
     var isBotDetected = false
-    /// 現在の再生速度（1.0 または 2.0）
-    var playbackRate: Float = 1.0
+    /// 現在の再生速度（1.0 または 2.0）。UserDefaults に永続化してアプリ全体で維持する。
+    var playbackRate: Float = {
+        let v = UserDefaults.standard.float(forKey: "playbackRate")
+        return v.isZero ? 1.0 : v
+    }() {
+        didSet { UserDefaults.standard.set(playbackRate, forKey: "playbackRate") }
+    }
     /// ループ再生が有効かどうか
     var isLooping = false
     /// 次動画を自動再生するかどうか
@@ -76,7 +81,7 @@ final class PlayerViewModel {
         isLoadingRelated = true
         streamError = nil
         isBotDetected = false
-        playbackRate = 1.0
+        // playbackRate はリセットしない（ユーザーの倍速設定を維持）
 
         // ストリームと関連動画を並列取得
         async let streamTask: Void = loadStream(videoID: videoID, modelContext: modelContext)
@@ -123,6 +128,10 @@ final class PlayerViewModel {
                 }
             }
             avPlayer.play()
+            // ユーザーの倍速設定を即座に適用
+            if playbackRate != 1.0 {
+                avPlayer.rate = playbackRate
+            }
             isLoadingStream = false
             // コントロールセンター・ロック画面の Now Playing を開始する
             NowPlayingManager.shared.start(
