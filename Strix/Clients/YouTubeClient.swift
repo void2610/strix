@@ -16,6 +16,8 @@ struct YouTubeClient {
 
 struct VideoInfo {
     let streamURL: URL
+    /// 音声のみストリーム URL（adaptive formats から取得、nil なら通常のみ）
+    let audioOnlyURL: URL?
     let title: String
     let thumbnailURL: String
     let channelId: String?
@@ -115,7 +117,7 @@ extension YouTubeClient {
             throw YouTubeClientError.streamNotFound
         }
 
-        return VideoInfo(streamURL: streamURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
+        return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
     }
 
@@ -172,15 +174,14 @@ extension YouTubeClient {
         // HLS（稀に WEB でも返る場合がある）
         if let hlsString = streamingData?["hlsManifestUrl"] as? String,
            let streamURL = URL(string: hlsString) {
-            return VideoInfo(streamURL: streamURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
+            return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                              channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
         }
 
         // combined formats（audio+video 一体型、最も再生しやすい）
         if let formats = streamingData?["formats"] as? [[String: Any]] {
-            // 最高画質を選択
             if let best = formats.last, let urlStr = best["url"] as? String, let streamURL = URL(string: urlStr) {
-                return VideoInfo(streamURL: streamURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
+                return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                                  channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
             }
         }
@@ -241,9 +242,9 @@ extension YouTubeClient {
         return json
     }
 
-    /// レスポンスからタイトル・サムネイル・チャンネル情報を抽出する
+    /// レスポンスからタイトル・サムネイル・チャンネル情報・音声 URL を抽出する
     private static func extractVideoMeta(from json: [String: Any], videoID: String)
-        -> (title: String, thumbnailURL: String, channelId: String?, channelName: String?, channelAvatarURL: URL?) {
+        -> (title: String, thumbnailURL: String, channelId: String?, channelName: String?, channelAvatarURL: URL?, audioOnlyURL: URL?) {
         let videoDetails = json["videoDetails"] as? [String: Any]
         let title = videoDetails?["title"] as? String ?? videoID
         let thumbnails = (videoDetails?["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
@@ -268,7 +269,18 @@ extension YouTubeClient {
             channelAvatarURL = ContentClient.findAvatarURL(in: json)
         }
 
-        return (title, thumbnailURL, channelId, channelName, channelAvatarURL)
+        // 音声のみ URL: adaptiveFormats から最高品質の audio を取得
+        var audioOnlyURL: URL? = nil
+        if let adaptiveFormats = (json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]] {
+            let audioFormats = adaptiveFormats.filter { ($0["mimeType"] as? String)?.hasPrefix("audio/") == true }
+            // ビットレートが最も高いものを選択
+            let best = audioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
+            if let urlStr = best?["url"] as? String {
+                audioOnlyURL = URL(string: urlStr)
+            }
+        }
+
+        return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL)
     }
 }
 
@@ -376,14 +388,14 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
         // HLS
         if let hlsString = streamingData?["hlsManifestUrl"] as? String,
            let streamURL = URL(string: hlsString) {
-            resolve(with: .success(VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
+            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
             return
         }
 
         // combined formats
         if let formats = streamingData?["formats"] as? [[String: Any]],
            let best = formats.last, let urlStr = best["url"] as? String, let streamURL = URL(string: urlStr) {
-            resolve(with: .success(VideoInfo(streamURL: streamURL, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
+            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
             return
         }
 

@@ -29,6 +29,10 @@ final class PlayerViewModel {
     }() {
         didSet { UserDefaults.standard.set(playbackRate, forKey: "playbackRate") }
     }
+    /// 音声のみモード
+    var isAudioOnly = false
+    /// WEB クライアントから取得した音声のみ URL
+    var audioOnlyURL: URL?
     /// ループ再生が有効かどうか
     var isLooping = false
     /// 次動画を自動再生するかどうか
@@ -84,16 +88,19 @@ final class PlayerViewModel {
         videoDescription = nil
         viewCountText = nil
         publishDateText = nil
+        audioOnlyURL = nil
+        isAudioOnly = false
         isLoadingStream = true
         isLoadingRelated = true
         streamError = nil
         isBotDetected = false
         // playbackRate はリセットしない（ユーザーの倍速設定を維持）
 
-        // ストリームと関連動画を並列取得
+        // ストリーム・関連動画・音声URL を並列取得
         async let streamTask: Void = loadStream(videoID: videoID, modelContext: modelContext)
         async let relatedTask: Void = loadRelated(videoID: videoID)
-        _ = await (streamTask, relatedTask)
+        async let audioTask: Void = loadAudioOnlyURL(videoID: videoID)
+        _ = await (streamTask, relatedTask, audioTask)
     }
 
     private func loadStream(videoID: String, modelContext: ModelContext) async {
@@ -177,6 +184,44 @@ final class PlayerViewModel {
         isLoadingRelated = false
     }
 
+    /// WEB クライアントから音声のみ URL を取得する（IOS クライアントは HLS のみで adaptiveFormats を返さないため）
+    private func loadAudioOnlyURL(videoID: String) async {
+        // WEB クライアントで /player を叩いて adaptiveFormats から音声 URL を取得
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
+            let deduped = ContentClient.deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = ContentClient.buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        }
+        let body: [String: Any] = [
+            "videoId": videoID,
+            "contentCheckOk": true,
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        guard let (data, _) = try? await URLSession(configuration: sessionConfig).data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let adaptiveFormats = (json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]] else { return }
+
+        let audioFormats = adaptiveFormats.filter { ($0["mimeType"] as? String)?.hasPrefix("audio/") == true }
+        let best = audioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
+        if let urlStr = best?["url"] as? String, let audioURL = URL(string: urlStr) {
+            audioOnlyURL = audioURL
+        }
+    }
+
     /// 再生速度を 1.0 → 2.0 → 1.0 の順に切り替える
     func togglePlaybackRate() {
         playbackRate = (playbackRate == 1.0) ? 2.0 : 1.0
@@ -191,6 +236,27 @@ final class PlayerViewModel {
     /// 次動画自動再生のオン/オフを切り替える
     func toggleAutoPlayNext() {
         autoPlayNext.toggle()
+    }
+
+    /// 通常モード ↔ 音声のみモードを切り替える
+    func toggleAudioOnly() {
+        guard let info = videoInfo else { return }
+        guard let audioURL = audioOnlyURL else { return }
+        isAudioOnly.toggle()
+        let targetURL = isAudioOnly ? audioURL : info.streamURL
+        let currentTime = player?.currentTime()
+        let wasPlaying = player?.rate != 0
+
+        let newPlayer = AVPlayer(url: targetURL)
+        player = newPlayer
+        // 再生位置を復元
+        if let time = currentTime, time.isValid {
+            newPlayer.seek(to: time)
+        }
+        if wasPlaying {
+            newPlayer.play()
+            if playbackRate != 1.0 { newPlayer.rate = playbackRate }
+        }
     }
 
     /// 再生終了時の処理（通知 + 定期監視の両方から呼ばれるため二重発火を防止）
@@ -250,6 +316,7 @@ struct PlayerView: View {
     @State private var channelToOpen: String?
     @State private var showBotVerify = false
     @State private var showFullDescription = false
+    @State private var showShareSheet = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -301,9 +368,26 @@ struct PlayerView: View {
 
                         Spacer()
 
+                        // 音声のみ切り替え
+                        if vm.audioOnlyURL != nil {
+                            playerControlButton(
+                                icon: vm.isAudioOnly ? "speaker.wave.2.fill" : "video.fill",
+                                isActive: vm.isAudioOnly
+                            ) { vm.toggleAudioOnly() }
+                        }
+
                         // 倍速切り替え
                         Button { vm.togglePlaybackRate() } label: {
                             Text(vm.playbackRate == 1.0 ? "1×" : "2×")
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(.thinMaterial, in: Capsule())
+                        }
+
+                        // 共有
+                        Button { showShareSheet = true } label: {
+                            Image(systemName: "square.and.arrow.up")
                                 .font(.caption.bold())
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
@@ -364,6 +448,11 @@ struct PlayerView: View {
             vm.player?.pause()
             NowPlayingManager.shared.stop()
             LiveActivityManager.shared.stop()
+        }
+        .sheet(isPresented: $showShareSheet) {
+            if let url = URL(string: "https://youtu.be/\(currentVideoID)") {
+                ShareSheet(items: [url])
+            }
         }
         .sheet(isPresented: $showBotVerify) {
             BotVerifyView {
@@ -689,3 +778,17 @@ final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControlle
     }
 }
 
+
+
+// MARK: - 共有シート
+
+/// UIActivityViewController の SwiftUI ラッパー
+private struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}

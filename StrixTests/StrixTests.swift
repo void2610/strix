@@ -961,7 +961,7 @@ struct PlayerViewModelTests {
     @Test func loadSetsVideoInfoOnSuccess() async throws {
         let dummyURL = URL(string: "https://example.com/test.m3u8")!
         let youtubeClient = YouTubeClient(fetchVideo: { _ in
-            VideoInfo(streamURL: dummyURL, title: "テスト動画", thumbnailURL: "https://example.com/thumb.jpg", channelId: nil, channelName: nil, channelAvatarURL: nil)
+            VideoInfo(streamURL: dummyURL, audioOnlyURL: nil, title: "テスト動画", thumbnailURL: "https://example.com/thumb.jpg", channelId: nil, channelName: nil, channelAvatarURL: nil)
         })
         let vm = PlayerViewModel(youtubeClient: youtubeClient, contentClient: .mock())
         let ctx = try makeInMemoryContext()
@@ -976,7 +976,7 @@ struct PlayerViewModelTests {
     @Test func loadSavesVideoToHistory() async throws {
         let dummyURL = URL(string: "https://example.com/test.m3u8")!
         let youtubeClient = YouTubeClient(fetchVideo: { _ in
-            VideoInfo(streamURL: dummyURL, title: "履歴テスト", thumbnailURL: "https://example.com/t.jpg", channelId: nil, channelName: nil, channelAvatarURL: nil)
+            VideoInfo(streamURL: dummyURL, audioOnlyURL: nil, title: "履歴テスト", thumbnailURL: "https://example.com/t.jpg", channelId: nil, channelName: nil, channelAvatarURL: nil)
         })
         let vm = PlayerViewModel(youtubeClient: youtubeClient, contentClient: .mock())
         let ctx = try makeInMemoryContext()
@@ -1080,6 +1080,63 @@ struct PlayerViewModelTests {
         let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound }), contentClient: .mock())
         #expect(vm.playlistQueue.isEmpty)
         #expect(vm.playlistIndex == 0)
+    }
+
+    // MARK: - 音声のみモード
+
+    @Test func audioOnlyDefaultsToFalse() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound }), contentClient: .mock())
+        #expect(!vm.isAudioOnly)
+        #expect(vm.audioOnlyURL == nil)
+    }
+
+    @Test func toggleAudioOnlyDoesNothingWithoutURL() {
+        let dummyURL = URL(string: "https://example.com/test.m3u8")!
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in
+            VideoInfo(streamURL: dummyURL, audioOnlyURL: nil, title: "test", thumbnailURL: "", channelId: nil, channelName: nil, channelAvatarURL: nil)
+        }), contentClient: .mock())
+        vm.videoInfo = VideoInfo(streamURL: dummyURL, audioOnlyURL: nil, title: "test", thumbnailURL: "", channelId: nil, channelName: nil, channelAvatarURL: nil)
+        vm.toggleAudioOnly()
+        #expect(!vm.isAudioOnly)
+    }
+}
+
+// MARK: - 説明欄データ抽出テスト
+
+struct VideoDescriptionParsingTests {
+
+    @Test func extractVideoDescriptionFromStructured() {
+        let json: [String: Any] = [
+            "engagementPanels": [
+                ["engagementPanelSectionListRenderer": [
+                    "content": [
+                        "structuredDescriptionContentRenderer": [
+                            "items": [
+                                ["videoDescriptionHeaderRenderer": [
+                                    "views": ["simpleText": "1,234回視聴"],
+                                    "publishDate": ["simpleText": "2025/01/15"]
+                                ]],
+                                ["expandableVideoDescriptionBodyRenderer": [
+                                    "attributedDescriptionBodyText": ["content": "テスト説明文です"]
+                                ]]
+                            ]
+                        ]
+                    ]
+                ]]
+            ]
+        ]
+        let (desc, views, date) = ContentClient.extractVideoDescription(from: json)
+        #expect(desc == "テスト説明文です")
+        #expect(views == "1,234回視聴")
+        #expect(date == "2025/01/15")
+    }
+
+    @Test func extractVideoDescriptionReturnsNilForEmpty() {
+        let json: [String: Any] = ["empty": true]
+        let (desc, views, date) = ContentClient.extractVideoDescription(from: json)
+        #expect(desc == nil)
+        #expect(views == nil)
+        #expect(date == nil)
     }
 }
 
