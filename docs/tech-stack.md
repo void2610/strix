@@ -4,76 +4,25 @@
 
 | 領域 | 選択 |
 |---|---|
-| 言語 | Swift 6 |
-| UI | SwiftUI（+ 一部 UIKit） |
-| 最小ターゲット | iOS 17+ |
-
-UIKit との混在は AVKit 連携など一部の場面で現実的に必要。
-
-## データ取得
-
-- **YouTubeKit**（Innertube API ラッパー）でストリーム URL を取得
-  - NewPipe / Piped などが使っている非公式内部 API
-  - 広告なし再生の核心部分
-- **YouTube Data API v3**（公式）で検索・メタデータ補完
-
-> ⚠️ YouTube 利用規約上、個人・学習目的の範囲に留める
-
-## 再生・バックグラウンド・PiP
-
-```swift
-import AVKit
-import AVFoundation
-
-// バックグラウンド再生
-try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-
-// PiP
-// AVPictureInPictureController（iOS 14+）
-```
-
-- `Info.plist` に `UIBackgroundModes: audio` を追加
-- AVPlayer / AVKit で PiP・バックグラウンド再生をカバー
-
-## アーキテクチャ
-
-**TCA（The Composable Architecture）** または **MVVM + @Observable**
-
-```
-App
-├── Features/
-│   ├── Home/
-│   ├── Player/
-│   ├── Search/
-│   └── Settings/
-└── Clients/
-    ├── YouTubeClient
-    └── PlayerClient
-```
+| 言語 | Swift 6（strict concurrency 有効、`@MainActor` デフォルト） |
+| UI | SwiftUI |
+| 最小ターゲット | iOS 26.2+（Xcode 26.3 で作成） |
 
 ## 主要ライブラリ（SPM）
 
-| ライブラリ | 用途 |
-|---|---|
-| `swift-composable-architecture` | 状態管理 |
-| `Nuke` | サムネキャッシュ |
-| `YouTubeKit` | Innertube API ラッパー |
+| ライブラリ | バージョン | 用途 |
+|---|---|---|
+| YouTubeKit | 1.3.0 | 検索（`SearchResponse`）のみ使用。他はすべて Innertube 直接呼び出し |
+| Nuke / NukeUI | 12.9.0 | サムネイル画像キャッシュ |
 
-## UI 方針
+## アーキテクチャパターン
 
-- NavigationStack（iOS 16+）
-- SF Symbols
-- Dynamic Type 対応
+- **MVVM + @Observable**: ViewModel は `@Observable` マクロで状態管理
+- **DI パターン**: `init(client: ContentClient = .live)` で本番はデフォルト引数、テスト時は `.mock()` で差し替え
+- **クライアント分離**: `YouTubeClient` / `ContentClient` / `AccountClient` / `AuthClient` に責務を分離
 
 ## 開発環境
 
-- **開発機**：M1 MacBook Pro（常時起動）
-- **ターゲット端末**：手元の iPhone
-- **リモート操作**：Tailscale 経由で屋外から Claude Code に指示
-
-### Claude Code × Xcode
-
-- **ローカル**：Claude Code CLI + XcodeBuildMCP でビルド・シミュレータ操作を自動化
-- **Xcode 26.3 以降**：Claude Agent SDK がネイティブ統合（SwiftUI Preview の視覚確認も可能）
-
-> Claude Code のクラウド実行環境は Linux のため、iOS ビルドは不可。ローカル Mac 必須。
+- **開発機**: M1 MacBook Pro
+- **ターゲット端末**: iPhone 16
+- **リモート操作**: Tailscale 経由で Claude Code に指示

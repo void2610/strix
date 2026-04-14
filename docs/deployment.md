@@ -1,48 +1,77 @@
-# ビルド・デプロイ方針
+# ビルド・デプロイ
 
-## 採用：無料 Apple ID + Tailscale Wireless
+## 方針
 
-```
-屋外の iPhone
-    ↓ Tailscale 経由で指示
-MacBook の Claude Code がビルド
-    ↓ Tailscale Wireless（WireGuard P2P）
-iPhone に直接インストール
-```
+- 無料 Apple ID + ローカルビルド（Apple Developer Program 不使用）
+- 7日で証明書失効 → 定期的に再ビルド＆インストール
 
-**Apple Developer Program（$99/年）は使わない。**
+## デバイス情報（iPhone 16）
 
-## 無料プロビジョニングの概要
+| 項目 | 値 |
+|---|---|
+| UDID | `00008140-001C61C436A2801C` |
+| CoreDevice ID | `9C6866FC-D294-573E-BB8B-4106CC0E01F6` |
+| 開発チーム | `8MDSKG4HM9`（Personal Team） |
 
-- Xcode に Apple ID（無料）を登録するだけで自分の iPhone にインストール可能
-- App Store・TestFlight 不要
-- **制限：証明書が 7 日で失効 → 週 1 回再インストールが必要**
+## 接続方法
 
-```
-Xcode → Settings → Accounts → Apple ID 追加
-プロジェクト Signing & Capabilities → Team を Apple ID に設定
-```
+iOS の CoreDevice 通信ポート（62078）は Wi-Fi インターフェースにのみバインドされるため、**Tailscale 単独では接続不可**。
 
-## 7日失効の対策
+| 方法 | 状態 |
+|---|---|
+| USB 接続 | 最も確実 |
+| 同じ Wi-Fi（ペアリング済み） | OK |
+| Tailscale のみ（別ネットワーク） | 不可 |
 
-fastlane で再署名・再インストールを自動化：
+### ネットワークペアリング（初回のみ・USB 接続時）
 
 ```bash
-# 週1で自動実行
-fastlane resign_and_install
+xcrun devicectl manage pair --device 9C6866FC-D294-573E-BB8B-4106CC0E01F6
 ```
 
-## Tailscale の通信量
+## ビルドコマンド
 
-- シグナリングのみ Tailscale サーバー経由、実データは P2P（WireGuard）直通
-- Tailscale 自体の通信コストはほぼゼロ
-- .ipa 転送分のモバイル回線消費はあるが許容範囲
+```bash
+# デバイス確認
+xcrun devicectl list devices --columns udid
 
-## 比較表
+# シミュレータビルド
+xcodebuild -project Strix.xcodeproj -scheme Strix \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build \
+  2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED"
 
-| | 無料 + Tailscale | $99/年 + TestFlight |
-|---|---|---|
-| コスト | 0円 | 約15,000円/年 |
-| 配布先 | 自分のみ | 複数人も可 |
-| 手間 | 7日ごと再インストール | ほぼ自動 |
-| 今回の用途 | **◎** | 不要 |
+# 実機ビルド
+xcodebuild -project Strix.xcodeproj -scheme Strix \
+  -destination "platform=iOS,id=00008140-001C61C436A2801C" \
+  -configuration Debug -allowProvisioningUpdates \
+  build 2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED|CodeSign"
+
+# インストール
+xcrun devicectl device install app \
+  --device 9C6866FC-D294-573E-BB8B-4106CC0E01F6 \
+  $(find ~/Library/Developer/Xcode/DerivedData/Strix-*/Build/Products/Debug-iphoneos -name "Strix.app" -maxdepth 1 | head -1)
+
+# ビルド＆インストール一括
+xcodebuild -project Strix.xcodeproj -scheme Strix \
+  -destination "platform=iOS,id=00008140-001C61C436A2801C" \
+  -configuration Debug -allowProvisioningUpdates build && \
+xcrun devicectl device install app \
+  --device 9C6866FC-D294-573E-BB8B-4106CC0E01F6 \
+  $(find ~/Library/Developer/Xcode/DerivedData/Strix-*/Build/Products/Debug-iphoneos -name "Strix.app" -maxdepth 1 | head -1)
+
+# シミュレータ一覧
+xcodebuild -project Strix.xcodeproj -scheme Strix -showdestinations
+
+# SPM パッケージ解決
+xcodebuild -resolvePackageDependencies -project Strix.xcodeproj
+```
+
+## テスト
+
+```bash
+# ユニットテスト
+xcodebuild test -project Strix.xcodeproj -scheme Strix \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing:StrixTests \
+  2>&1 | grep -E "passed|failed|error:"
+```
