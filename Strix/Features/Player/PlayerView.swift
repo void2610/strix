@@ -29,10 +29,10 @@ final class PlayerViewModel {
     }() {
         didSet { UserDefaults.standard.set(playbackRate, forKey: "playbackRate") }
     }
-    /// 音声のみモード
-    var isAudioOnly = false
-    /// WEB クライアントから取得した音声のみ URL
-    var audioOnlyURL: URL?
+    /// 音声のみモード（UserDefaults に永続化）
+    var isAudioOnly: Bool = UserDefaults.standard.bool(forKey: "isAudioOnly") {
+        didSet { UserDefaults.standard.set(isAudioOnly, forKey: "isAudioOnly") }
+    }
     /// ループ再生が有効かどうか
     var isLooping = false
     /// 次動画を自動再生するかどうか
@@ -88,8 +88,6 @@ final class PlayerViewModel {
         videoDescription = nil
         viewCountText = nil
         publishDateText = nil
-        audioOnlyURL = nil
-        isAudioOnly = false
         isLoadingStream = true
         isLoadingRelated = true
         streamError = nil
@@ -106,8 +104,9 @@ final class PlayerViewModel {
         do {
             let info = try await youtubeClient.fetchVideo(videoID)
             videoInfo = info
-            audioOnlyURL = info.audioOnlyURL
-            let avPlayer = AVPlayer(url: info.streamURL)
+            // 音声のみモードなら音声 URL を使用、なければ通常ストリーム
+            let playURL = (isAudioOnly && info.audioOnlyURL != nil) ? info.audioOnlyURL! : info.streamURL
+            let avPlayer = AVPlayer(url: playURL)
             player = avPlayer
             // PiP コントロールで再生再開すると rate が 1.0 に戻るため、
             // rateDidChangeNotification で監視して playbackRate を復元する
@@ -200,18 +199,16 @@ final class PlayerViewModel {
         autoPlayNext.toggle()
     }
 
-    /// 通常モード ↔ 音声のみモードを切り替える
+    /// 通常モード ↔ 音声のみモードを切り替え、現在の動画をリロードする
     func toggleAudioOnly() {
         guard let info = videoInfo else { return }
-        guard let audioURL = audioOnlyURL else { return }
         isAudioOnly.toggle()
-        let targetURL = isAudioOnly ? audioURL : info.streamURL
+        let targetURL = (isAudioOnly && info.audioOnlyURL != nil) ? info.audioOnlyURL! : info.streamURL
         let currentTime = player?.currentTime()
         let wasPlaying = player?.rate != 0
 
         let newPlayer = AVPlayer(url: targetURL)
         player = newPlayer
-        // 再生位置を復元
         if let time = currentTime, time.isValid {
             newPlayer.seek(to: time)
         }
@@ -331,12 +328,10 @@ struct PlayerView: View {
                         Spacer()
 
                         // 音声のみ切り替え
-                        if vm.audioOnlyURL != nil {
-                            playerControlButton(
-                                icon: vm.isAudioOnly ? "speaker.wave.2.fill" : "video.fill",
-                                isActive: vm.isAudioOnly
-                            ) { vm.toggleAudioOnly() }
-                        }
+                        playerControlButton(
+                            icon: vm.isAudioOnly ? "speaker.wave.2.fill" : "video.fill",
+                            isActive: vm.isAudioOnly
+                        ) { vm.toggleAudioOnly() }
 
                         // 倍速切り替え
                         Button { vm.togglePlaybackRate() } label: {
