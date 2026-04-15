@@ -13,6 +13,8 @@ import NukeUI
 /// ホームフィードで使用する。
 struct VideoCardView: View {
     let video: VideoItem
+    /// チャンネルアバター・名前のリンクを有効にするか（ChannelView 内では false にする）
+    var showChannelLink: Bool = true
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -30,7 +32,7 @@ struct VideoCardView: View {
             // メタ情報行（アバター + タイトル・チャンネル名・視聴回数）
             HStack(alignment: .top, spacing: 12) {
                 // チャンネルアバター（タップでチャンネルページへ）
-                if let channelId = video.channelId {
+                if showChannelLink, let channelId = video.channelId {
                     NavigationLink(value: ChannelDestination(channelId: channelId)) {
                         channelAvatar
                             .frame(width: 36, height: 36)
@@ -51,7 +53,7 @@ struct VideoCardView: View {
                         .foregroundStyle(.primary)
 
                     // チャンネル名（タップでチャンネルページへ）
-                    if let channelId = video.channelId {
+                    if showChannelLink, let channelId = video.channelId {
                         NavigationLink(value: ChannelDestination(channelId: channelId)) {
                             metaText
                                 .font(.caption)
