@@ -6,21 +6,26 @@
 //
 
 import SwiftUI
+import SwiftData
 import NukeUI
 
 /// YouTube 風の動画カード（サムネイル 16:9 + チャンネルアバター + メタ情報）
 /// ホームフィードで使用する。
 struct VideoCardView: View {
     let video: VideoItem
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // サムネイル（16:9）
+            // サムネイル（16:9）+ プログレスバー
             thumbnail
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .background(Color(.secondarySystemBackground))
                 .clipped()
+                .overlay(alignment: .bottom) {
+                    VideoProgressBar(videoID: video.videoId, modelContext: modelContext)
+                }
 
             // メタ情報行（アバター + タイトル・チャンネル名・視聴回数）
             HStack(alignment: .top, spacing: 12) {
@@ -156,10 +161,11 @@ struct VideoCardView: View {
 /// 検索結果・関連動画リスト向けのコンパクトな横並びビュー
 struct VideoRowView: View {
     let video: VideoItem
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            // サムネイル
+            // サムネイル + プログレスバー
             Group {
                 if let url = video.thumbnailURL {
                     LazyImage(url: url) { state in
@@ -176,6 +182,10 @@ struct VideoRowView: View {
             .aspectRatio(16 / 9, contentMode: .fit)
             .frame(width: 160)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .bottom) {
+                VideoProgressBar(videoID: video.videoId, modelContext: modelContext)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
 
             // メタ情報
             VStack(alignment: .leading, spacing: 4) {
@@ -193,5 +203,43 @@ struct VideoRowView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+// MARK: - 再生プログレスバー
+
+/// サムネイル下部に表示する再生進捗バー（YouTube 風の赤いバー）。
+/// WatchedVideo の playbackPosition / videoDuration から進捗率を算出する。
+struct VideoProgressBar: View {
+    let videoID: String
+    let modelContext: ModelContext
+
+    var body: some View {
+        let progress = fetchProgress()
+        if let progress {
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(Color.red)
+                    .frame(width: geo.size.width * progress, height: 3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 3)
+        }
+    }
+
+    /// SwiftData から再生進捗率を取得する（0.0〜1.0、未視聴なら nil）
+    private func fetchProgress() -> Double? {
+        let targetID = videoID
+        var descriptor = FetchDescriptor<WatchedVideo>(
+            predicate: #Predicate { $0.videoID == targetID }
+        )
+        descriptor.fetchLimit = 1
+        guard let record = try? modelContext.fetch(descriptor).first,
+              record.videoDuration > 0,
+              record.playbackPosition > 5 else { return nil }
+        let ratio = record.playbackPosition / record.videoDuration
+        // 95%以上は視聴完了扱い → バーを表示しない
+        if ratio >= 0.95 { return nil }
+        return min(ratio, 1.0)
     }
 }

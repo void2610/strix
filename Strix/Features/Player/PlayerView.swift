@@ -368,6 +368,7 @@ struct PlayerView: View {
     @State private var showBotVerify = false
     @State private var showFullDescription = false
     @State private var showShareSheet = false
+    @State private var showComments = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -717,49 +718,126 @@ struct PlayerView: View {
 
     // MARK: - コメント
 
+    /// コメント展開バー（公式クライアント風）。タップでシートを開く。
     private var commentsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        Group {
             if vm.isLoadingComments {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
+                // ローディング中は薄いプレースホルダー
+                HStack {
+                    Text("コメント")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             } else if !vm.comments.isEmpty {
-                Text("コメント")
-                    .font(.headline)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 8)
+                Button { showComments = true } label: {
+                    VStack(spacing: 0) {
+                        // ヘッダー行
+                        HStack {
+                            Text("コメント")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.primary)
+                            Text("\(vm.comments.count)件")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 8)
 
+                        // 先頭コメントのプレビュー
+                        if let first = vm.comments.first {
+                            HStack(alignment: .top, spacing: 8) {
+                                // アバター
+                                Group {
+                                    if let url = first.authorAvatarURL {
+                                        LazyImage(url: url) { state in
+                                            if let image = state.image {
+                                                image.resizable().scaledToFill()
+                                            } else {
+                                                commentAvatarPlaceholder
+                                            }
+                                        }
+                                    } else {
+                                        commentAvatarPlaceholder
+                                    }
+                                }
+                                .frame(width: 24, height: 24)
+                                .clipShape(Circle())
+
+                                Text(first.contentText)
+                                    .font(.caption)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                        }
+                    }
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .sheet(isPresented: $showComments) {
+            commentsSheet
+        }
+    }
+
+    /// コメント全件表示シート
+    private var commentsSheet: some View {
+        NavigationStack {
+            ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(vm.comments) { comment in
                         commentRow(comment)
-
                         Divider()
                             .padding(.leading, 56)
                     }
 
-                    // ページネーション（もっと読み込む）
+                    // ページネーション
                     if vm.commentsContinuation != nil {
                         if vm.isLoadingMoreComments {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
                         } else {
-                            Button {
-                                Task { await vm.loadMoreComments() }
-                            } label: {
-                                Text("コメントをさらに表示")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Color.accentColor)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                            }
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .onAppear {
+                                    Task { await vm.loadMoreComments() }
+                                }
                         }
                     }
                 }
             }
-            // コメントがゼロの場合は何も表示しない
+            .navigationTitle("コメント")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showComments = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     private func commentRow(_ comment: CommentItem) -> some View {
