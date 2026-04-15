@@ -45,6 +45,11 @@ final class PlayerViewModel {
     var videoDescription: String?
     var viewCountText: String?
     var publishDateText: String?
+    /// コメント一覧
+    var comments: [CommentItem] = []
+    var isLoadingComments = true
+    var commentsContinuation: String?
+    var isLoadingMoreComments = false
     /// 現在ロード済みの動画 ID（View の .task(id:) による二重ロードを防ぐ）
     private(set) var loadedVideoID: String?
 
@@ -69,6 +74,8 @@ final class PlayerViewModel {
     }
 
     func load(videoID: String, modelContext: ModelContext) async {
+        // 前の動画の再生位置を保存してから切り替える
+        savePlaybackPosition(modelContext: modelContext)
         // 再ロード時: 前のプレイヤーを停止して状態をリセットする
         // これにより player = nil で AVPlayerLayerView が一度ツリーから外れ、
         // 新しいプレイヤーで再生成されるため同時再生が発生しない
@@ -88,16 +95,21 @@ final class PlayerViewModel {
         videoDescription = nil
         viewCountText = nil
         publishDateText = nil
+        comments = []
+        isLoadingComments = true
+        commentsContinuation = nil
+        isLoadingMoreComments = false
         isLoadingStream = true
         isLoadingRelated = true
         streamError = nil
         isBotDetected = false
         // playbackRate はリセットしない（ユーザーの倍速設定を維持）
 
-        // ストリームと関連動画を並列取得
+        // ストリームと関連動画とコメントを並列取得
         async let streamTask: Void = loadStream(videoID: videoID, modelContext: modelContext)
         async let relatedTask: Void = loadRelated(videoID: videoID)
-        _ = await (streamTask, relatedTask)
+        async let commentsTask: Void = loadComments(videoID: videoID)
+        _ = await (streamTask, relatedTask, commentsTask)
     }
 
     private func loadStream(videoID: String, modelContext: ModelContext) async {
@@ -145,6 +157,8 @@ final class PlayerViewModel {
             if playbackRate != 1.0 {
                 avPlayer.rate = playbackRate
             }
+            // 前回の再生位置があればシークして復帰する
+            resumeIfNeeded(modelContext: modelContext)
             isLoadingStream = false
             // コントロールセンター・ロック画面の Now Playing を開始する
             NowPlayingManager.shared.start(
@@ -181,6 +195,31 @@ final class PlayerViewModel {
             // 関連動画の失敗はサイレントに扱う
         }
         isLoadingRelated = false
+    }
+
+    private func loadComments(videoID: String) async {
+        do {
+            let result = try await contentClient.fetchComments(videoID)
+            comments = result.comments
+            commentsContinuation = result.continuation
+        } catch {
+            // コメント取得の失敗はサイレントに扱う
+        }
+        isLoadingComments = false
+    }
+
+    /// コメントの次ページを読み込む
+    func loadMoreComments() async {
+        guard let token = commentsContinuation, !isLoadingMoreComments else { return }
+        isLoadingMoreComments = true
+        do {
+            let result = try await contentClient.fetchCommentsPage(token)
+            comments.append(contentsOf: result.comments)
+            commentsContinuation = result.continuation
+        } catch {
+            // 次ページ取得の失敗はサイレントに扱う
+        }
+        isLoadingMoreComments = false
     }
 
     /// 再生速度を 1.0 → 2.0 → 1.0 の順に切り替える
@@ -253,13 +292,66 @@ final class PlayerViewModel {
         autoNextVideoID = playlistQueue[playlistIndex].videoId
     }
 
-    private func saveToHistory(videoID: String, info: VideoInfo, modelContext: ModelContext) {
-        let video = WatchedVideo(
-            videoID: videoID,
-            title: info.title,
-            thumbnailURL: info.thumbnailURL
+    /// 現在の再生位置を SwiftData に保存する
+    func savePlaybackPosition(modelContext: ModelContext) {
+        guard let videoID = loadedVideoID,
+              let player,
+              let item = player.currentItem,
+              item.duration.isNumeric else { return }
+        let position = player.currentTime().seconds
+        let duration = item.duration.seconds
+        guard position.isFinite, duration.isFinite else { return }
+
+        let targetID = videoID
+        var descriptor = FetchDescriptor<WatchedVideo>(
+            predicate: #Predicate { $0.videoID == targetID }
         )
-        modelContext.insert(video)
+        descriptor.fetchLimit = 1
+        guard let record = try? modelContext.fetch(descriptor).first else { return }
+        record.playbackPosition = position
+        record.videoDuration = duration
+    }
+
+    /// 保存済みの再生位置があればシークして復帰する
+    /// （95%以上視聴済み or 残り10秒未満 → 最初から再生）
+    func resumeIfNeeded(modelContext: ModelContext) {
+        guard let videoID = loadedVideoID else { return }
+        let targetID = videoID
+        var descriptor = FetchDescriptor<WatchedVideo>(
+            predicate: #Predicate { $0.videoID == targetID }
+        )
+        descriptor.fetchLimit = 1
+        guard let record = try? modelContext.fetch(descriptor).first,
+              record.playbackPosition > 5,
+              record.videoDuration > 0 else { return }
+
+        let ratio = record.playbackPosition / record.videoDuration
+        let remaining = record.videoDuration - record.playbackPosition
+        if ratio >= 0.95 || remaining < 10 { return }
+
+        let target = CMTime(seconds: record.playbackPosition, preferredTimescale: 600)
+        player?.seek(to: target)
+    }
+
+    /// 視聴履歴を保存する（既存レコードがあれば更新、なければ挿入）
+    private func saveToHistory(videoID: String, info: VideoInfo, modelContext: ModelContext) {
+        let targetID = videoID
+        var descriptor = FetchDescriptor<WatchedVideo>(
+            predicate: #Predicate { $0.videoID == targetID }
+        )
+        descriptor.fetchLimit = 1
+        if let existing = try? modelContext.fetch(descriptor).first {
+            existing.watchedAt = .now
+            existing.title = info.title
+            existing.thumbnailURL = info.thumbnailURL
+        } else {
+            let video = WatchedVideo(
+                videoID: videoID,
+                title: info.title,
+                thumbnailURL: info.thumbnailURL
+            )
+            modelContext.insert(video)
+        }
     }
 }
 
@@ -366,6 +458,12 @@ struct PlayerView: View {
                 Divider()
                     .padding(.top, 8)
 
+                // コメント
+                commentsSection
+
+                Divider()
+                    .padding(.top, 8)
+
                 // 関連動画
                 relatedSection
             }
@@ -402,9 +500,15 @@ struct PlayerView: View {
         }
         .onDisappear {
             guard scenePhase == .active else { return }
+            vm.savePlaybackPosition(modelContext: modelContext)
             vm.player?.pause()
             NowPlayingManager.shared.stop()
             LiveActivityManager.shared.stop()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background || newPhase == .inactive {
+                vm.savePlaybackPosition(modelContext: modelContext)
+            }
         }
         .sheet(isPresented: $showShareSheet) {
             if let url = URL(string: "https://youtu.be/\(currentVideoID)") {
@@ -609,6 +713,120 @@ struct PlayerView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - コメント
+
+    private var commentsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if vm.isLoadingComments {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+            } else if !vm.comments.isEmpty {
+                Text("コメント")
+                    .font(.headline)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+
+                LazyVStack(spacing: 0) {
+                    ForEach(vm.comments) { comment in
+                        commentRow(comment)
+
+                        Divider()
+                            .padding(.leading, 56)
+                    }
+
+                    // ページネーション（もっと読み込む）
+                    if vm.commentsContinuation != nil {
+                        if vm.isLoadingMoreComments {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        } else {
+                            Button {
+                                Task { await vm.loadMoreComments() }
+                            } label: {
+                                Text("コメントをさらに表示")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
+                        }
+                    }
+                }
+            }
+            // コメントがゼロの場合は何も表示しない
+        }
+    }
+
+    private func commentRow(_ comment: CommentItem) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            // アバター
+            Group {
+                if let url = comment.authorAvatarURL {
+                    LazyImage(url: url) { state in
+                        if let image = state.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            commentAvatarPlaceholder
+                        }
+                    }
+                } else {
+                    commentAvatarPlaceholder
+                }
+            }
+            .frame(width: 32, height: 32)
+            .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 4) {
+                // 著者名・投稿日時
+                HStack(spacing: 4) {
+                    Text(comment.authorName)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    if let time = comment.publishedTimeText {
+                        Text(time)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                // コメント本文
+                Text(comment.contentText)
+                    .font(.subheadline)
+                    .lineLimit(4)
+
+                // 高評価数・返信数
+                HStack(spacing: 12) {
+                    if let likes = comment.likeCountText, !likes.isEmpty {
+                        Label(likes, systemImage: "hand.thumbsup")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if comment.replyCount > 0 {
+                        Label("\(comment.replyCount)件の返信", systemImage: "arrowshape.turn.up.left")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var commentAvatarPlaceholder: some View {
+        Circle()
+            .fill(Color(.tertiarySystemBackground))
+            .overlay {
+                Image(systemName: "person.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
     }
 
     // MARK: - 関連動画
