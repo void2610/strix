@@ -23,6 +23,16 @@ struct VideoInfo {
     let channelId: String?
     let channelName: String?
     let channelAvatarURL: URL?
+    /// 再生トラッキング URL（YouTube に視聴履歴を記録するため）
+    var playbackTrackingURLs: PlaybackTrackingURLs? = nil
+}
+
+/// YouTube の /player レスポンスに含まれる再生トラッキング URL
+struct PlaybackTrackingURLs {
+    /// 再生開始時に送信する URL
+    let videostatsPlaybackURL: String
+    /// 視聴時間を定期的に報告する URL
+    let videostatsWatchtimeURL: String
 }
 
 enum YouTubeClientError: LocalizedError {
@@ -118,7 +128,8 @@ extension YouTubeClient {
         }
 
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
-                         channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
+                         channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
+                         playbackTrackingURLs: meta.trackingURLs)
     }
 
     // MARK: - WEB クライアント（Cookie 認証、combined formats を返す）
@@ -175,14 +186,16 @@ extension YouTubeClient {
         if let hlsString = streamingData?["hlsManifestUrl"] as? String,
            let streamURL = URL(string: hlsString) {
             return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
-                             channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
+                             channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
+                             playbackTrackingURLs: meta.trackingURLs)
         }
 
         // combined formats（audio+video 一体型、最も再生しやすい）
         if let formats = streamingData?["formats"] as? [[String: Any]] {
             if let best = formats.last, let urlStr = best["url"] as? String, let streamURL = URL(string: urlStr) {
                 return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
-                                 channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL)
+                                 channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
+                                 playbackTrackingURLs: meta.trackingURLs)
             }
         }
 
@@ -242,9 +255,9 @@ extension YouTubeClient {
         return json
     }
 
-    /// レスポンスからタイトル・サムネイル・チャンネル情報・音声 URL を抽出する
+    /// レスポンスからタイトル・サムネイル・チャンネル情報・音声 URL・トラッキング URL を抽出する
     private static func extractVideoMeta(from json: [String: Any], videoID: String)
-        -> (title: String, thumbnailURL: String, channelId: String?, channelName: String?, channelAvatarURL: URL?, audioOnlyURL: URL?) {
+        -> (title: String, thumbnailURL: String, channelId: String?, channelName: String?, channelAvatarURL: URL?, audioOnlyURL: URL?, trackingURLs: PlaybackTrackingURLs?) {
         let videoDetails = json["videoDetails"] as? [String: Any]
         let title = videoDetails?["title"] as? String ?? videoID
         let thumbnails = (videoDetails?["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
@@ -280,7 +293,18 @@ extension YouTubeClient {
             }
         }
 
-        return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL)
+        // 再生トラッキング URL を抽出
+        var trackingURLs: PlaybackTrackingURLs? = nil
+        if let tracking = json["playbackTracking"] as? [String: Any],
+           let playbackURL = (tracking["videostatsPlaybackUrl"] as? [String: Any])?["baseUrl"] as? String,
+           let watchtimeURL = (tracking["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String {
+            trackingURLs = PlaybackTrackingURLs(
+                videostatsPlaybackURL: playbackURL,
+                videostatsWatchtimeURL: watchtimeURL
+            )
+        }
+
+        return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL, trackingURLs)
     }
 }
 
@@ -385,17 +409,25 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
 
         let streamingData = json["streamingData"] as? [String: Any]
 
+        // トラッキング URL
+        var trackingURLs: PlaybackTrackingURLs? = nil
+        if let tracking = json["playbackTracking"] as? [String: Any],
+           let playbackURL = (tracking["videostatsPlaybackUrl"] as? [String: Any])?["baseUrl"] as? String,
+           let watchtimeURL = (tracking["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String {
+            trackingURLs = PlaybackTrackingURLs(videostatsPlaybackURL: playbackURL, videostatsWatchtimeURL: watchtimeURL)
+        }
+
         // HLS
         if let hlsString = streamingData?["hlsManifestUrl"] as? String,
            let streamURL = URL(string: hlsString) {
-            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
+            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil, playbackTrackingURLs: trackingURLs)))
             return
         }
 
         // combined formats
         if let formats = streamingData?["formats"] as? [[String: Any]],
            let best = formats.last, let urlStr = best["url"] as? String, let streamURL = URL(string: urlStr) {
-            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil)))
+            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil, playbackTrackingURLs: trackingURLs)))
             return
         }
 

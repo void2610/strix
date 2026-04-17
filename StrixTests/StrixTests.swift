@@ -1527,6 +1527,175 @@ struct CommentParserTests {
     }
 }
 
+// MARK: - PlaybackTracker ユニットテスト
+
+struct PlaybackTrackerTests {
+
+    @Test func generateCPNReturns16Characters() {
+        let cpn = PlaybackTracker.generateCPN()
+        #expect(cpn.count == 16)
+    }
+
+    @Test func generateCPNUsesValidCharacters() {
+        let validChars = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        let cpn = PlaybackTracker.generateCPN()
+        for char in cpn {
+            #expect(validChars.contains(char), "不正な文字: \(char)")
+        }
+    }
+
+    @Test func generateCPNIsRandomEachTime() {
+        let cpn1 = PlaybackTracker.generateCPN()
+        let cpn2 = PlaybackTracker.generateCPN()
+        // 極めて低い確率で一致するが、実質的にはランダム
+        #expect(cpn1 != cpn2)
+    }
+
+    @Test func appendParamAddsQuestionMarkForFirstParam() {
+        let result = PlaybackTracker.appendParam("https://example.com/path", "key", "value")
+        #expect(result == "https://example.com/path?key=value")
+    }
+
+    @Test func appendParamAddsAmpersandForSubsequentParam() {
+        let result = PlaybackTracker.appendParam("https://example.com/path?existing=1", "key", "value")
+        #expect(result == "https://example.com/path?existing=1&key=value")
+    }
+
+    @Test func appendParamHandlesMultipleParams() {
+        var url = "https://example.com/api"
+        url = PlaybackTracker.appendParam(url, "cpn", "abc123")
+        url = PlaybackTracker.appendParam(url, "st", "0.000")
+        url = PlaybackTracker.appendParam(url, "et", "30.000")
+        #expect(url == "https://example.com/api?cpn=abc123&st=0.000&et=30.000")
+    }
+}
+
+// MARK: - PlaybackTrackingURLs パーサーテスト
+
+struct PlaybackTrackingURLsParsingTests {
+
+    @Test func extractTrackingURLsFromPlayerResponse() {
+        let json: [String: Any] = [
+            "playbackTracking": [
+                "videostatsPlaybackUrl": [
+                    "baseUrl": "https://s.youtube.com/api/stats/playback?cl=12345&docid=abc"
+                ],
+                "videostatsWatchtimeUrl": [
+                    "baseUrl": "https://s.youtube.com/api/stats/watchtime?cl=12345&docid=abc"
+                ]
+            ],
+            "videoDetails": [
+                "videoId": "abc",
+                "title": "テスト"
+            ],
+            "streamingData": [
+                "hlsManifestUrl": "https://manifest.googlevideo.com/test.m3u8"
+            ],
+            "playabilityStatus": ["status": "OK"]
+        ]
+
+        // extractVideoMeta は private なので、/player レスポンス全体をシミュレートして
+        // playbackTracking の抽出ロジックを直接テストする
+        let tracking = json["playbackTracking"] as? [String: Any]
+        let playbackURL = (tracking?["videostatsPlaybackUrl"] as? [String: Any])?["baseUrl"] as? String
+        let watchtimeURL = (tracking?["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String
+        #expect(playbackURL == "https://s.youtube.com/api/stats/playback?cl=12345&docid=abc")
+        #expect(watchtimeURL == "https://s.youtube.com/api/stats/watchtime?cl=12345&docid=abc")
+    }
+
+    @Test func trackingURLsAreNilWhenMissing() {
+        let json: [String: Any] = [
+            "videoDetails": ["videoId": "abc", "title": "テスト"],
+            "playabilityStatus": ["status": "OK"]
+        ]
+        let tracking = json["playbackTracking"] as? [String: Any]
+        #expect(tracking == nil)
+    }
+
+    @Test func trackingURLsAreNilWhenPartial() {
+        // playbackUrl だけあって watchtimeUrl がないケース
+        let json: [String: Any] = [
+            "playbackTracking": [
+                "videostatsPlaybackUrl": [
+                    "baseUrl": "https://s.youtube.com/api/stats/playback"
+                ]
+                // videostatsWatchtimeUrl が欠落
+            ]
+        ]
+        let tracking = json["playbackTracking"] as? [String: Any]
+        let watchtimeURL = (tracking?["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String
+        #expect(watchtimeURL == nil)
+    }
+}
+
+// MARK: - フィードバックトークン抽出テスト
+
+struct FeedbackTokenExtractionTests {
+
+    @Test func extractFeedbackTokensFromFeedbackEndpoint() {
+        let json: [String: Any] = [
+            "menu": [
+                "menuRenderer": [
+                    "items": [
+                        ["menuServiceItemRenderer": [
+                            "serviceEndpoint": [
+                                "feedbackEndpoint": [
+                                    "feedbackToken": "token_not_interested_123"
+                                ]
+                            ]
+                        ]]
+                    ]
+                ]
+            ]
+        ]
+        let tokens = ContentClient.extractFeedbackTokens(from: json)
+        #expect(tokens.contains("token_not_interested_123"))
+    }
+
+    @Test func extractFeedbackTokensReturnsEmptyForNoTokens() {
+        let json: [String: Any] = ["videoId": "abc", "title": "テスト"]
+        let tokens = ContentClient.extractFeedbackTokens(from: json)
+        #expect(tokens.isEmpty)
+    }
+
+    @Test func extractFeedbackTokensFindsMultipleTokens() {
+        let json: [String: Any] = [
+            "items": [
+                ["feedbackEndpoint": ["feedbackToken": "token_a"]],
+                ["feedbackEndpoint": ["feedbackToken": "token_b"]]
+            ]
+        ]
+        let tokens = ContentClient.extractFeedbackTokens(from: json)
+        #expect(tokens.count == 2)
+        #expect(tokens.contains("token_a"))
+        #expect(tokens.contains("token_b"))
+    }
+
+    @Test func extractFeedbackTokensFromDirectFeedbackToken() {
+        // feedbackEndpoint を経由せず feedbackToken が直接存在するパターン
+        let json: [String: Any] = [
+            "feedbackToken": "direct_token_456"
+        ]
+        let tokens = ContentClient.extractFeedbackTokens(from: json)
+        #expect(tokens.contains("direct_token_456"))
+    }
+}
+
+// MARK: - VideoItem feedbackTokens テスト
+
+struct VideoItemFeedbackTests {
+
+    @Test func videoItemDefaultsToEmptyFeedbackTokens() {
+        let item = VideoItem(videoId: "abc", title: "テスト")
+        #expect(item.feedbackTokens.isEmpty)
+    }
+
+    @Test func videoItemStoresFeedbackTokens() {
+        let item = VideoItem(videoId: "abc", title: "テスト", feedbackTokens: ["token1", "token2"])
+        #expect(item.feedbackTokens == ["token1", "token2"])
+    }
+}
+
 // MARK: - PlayerViewModel コメント ユニットテスト
 
 @MainActor

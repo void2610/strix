@@ -67,6 +67,8 @@ final class PlayerViewModel {
     private var endObserver: Any?
     /// 再生位置の定期監視トークン（バックアップの終端検出用）
     private var timeObserver: Any?
+    /// YouTube に視聴履歴を報告するトラッカー
+    private let playbackTracker = PlaybackTracker()
 
     init(youtubeClient: YouTubeClient = .live, contentClient: ContentClient = .live) {
         self.youtubeClient = youtubeClient
@@ -87,6 +89,7 @@ final class PlayerViewModel {
         endObserver = nil
         timeObserver = nil
         autoNextVideoID = nil
+        playbackTracker.stop()
         player?.pause()
         player = nil
         videoInfo = nil
@@ -173,6 +176,8 @@ final class PlayerViewModel {
                 thumbnailURL: info.thumbnailURL,
                 player: avPlayer
             )
+            // YouTube に再生開始を報告して視聴履歴に記録する
+            playbackTracker.start(player: avPlayer, trackingURLs: info.playbackTrackingURLs)
             saveToHistory(videoID: videoID, info: info, modelContext: modelContext)
         } catch {
             streamError = error
