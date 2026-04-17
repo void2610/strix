@@ -223,23 +223,51 @@ struct HomeView: View {
     private var feedSection: some View {
         LazyVStack(spacing: 0) {
             ForEach(vm.videos) { video in
-                if let playlistId = video.playlistId {
-                    // ミックスリスト・プレイリストはプレイリスト詳細へ
-                    NavigationLink {
-                        PlaylistDetailView(
-                            playlist: YTPlaylist(playlistId: playlistId, title: video.title)
-                        )
-                    } label: {
-                        VideoCardView(video: video)
+                Group {
+                    if let playlistId = video.playlistId {
+                        // ミックスリスト・プレイリストはプレイリスト詳細へ
+                        NavigationLink {
+                            PlaylistDetailView(
+                                playlist: YTPlaylist(playlistId: playlistId, title: video.title)
+                            )
+                        } label: {
+                            VideoCardView(video: video)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            path.append(video.videoId)
+                        } label: {
+                            VideoCardView(video: video)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                } else {
+                }
+                .contextMenu {
+                    if !video.feedbackTokens.isEmpty {
+                        Button(role: .destructive) {
+                            Task {
+                                try? await ContentClient.sendFeedback(tokens: video.feedbackTokens)
+                            }
+                            withAnimation {
+                                vm.videos.removeAll { $0.videoId == video.videoId }
+                            }
+                        } label: {
+                            Label("興味なし", systemImage: "hand.thumbsdown")
+                        }
+                    }
+
                     Button {
-                        path.append(video.videoId)
+                        UIPasteboard.general.url = URL(string: "https://youtu.be/\(video.videoId)")
                     } label: {
-                        VideoCardView(video: video)
+                        Label("リンクをコピー", systemImage: "doc.on.doc")
                     }
-                    .buttonStyle(.plain)
+
+                    if let url = URL(string: "https://youtu.be/\(video.videoId)") {
+                        ShareLink(item: url) {
+                            Label("共有", systemImage: "square.and.arrow.up")
+                        }
+                    }
                 }
 
                 Divider()

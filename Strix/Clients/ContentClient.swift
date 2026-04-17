@@ -841,6 +841,9 @@ extension ContentClient {
         let timePosted = (vr["publishedTimeText"] as? [String: Any])?["simpleText"] as? String
             ?? videoInfoRuns?.dropFirst().first(where: { ($0["text"] as? String) != " • " })?["text"] as? String
 
+        // フィードバックトークン（「興味なし」等）
+        let tokens = extractFeedbackTokens(from: vr)
+
         return VideoItem(
             videoId: videoId,
             title: title,
@@ -849,7 +852,8 @@ extension ContentClient {
             thumbnailURL: thumbURL,
             channelAvatarURL: avatarURL,
             viewCountText: viewCount,
-            timePostedText: timePosted
+            timePostedText: timePosted,
+            feedbackTokens: tokens
         )
     }
 
@@ -912,6 +916,9 @@ extension ContentClient {
             channelAvatarURL = findAvatarURL(in: lmvm as Any)
         }
 
+        // フィードバックトークン
+        let tokens = extractFeedbackTokens(from: lvm)
+
         return VideoItem(
             videoId: contentId,
             title: title,
@@ -921,7 +928,8 @@ extension ContentClient {
             channelAvatarURL: channelAvatarURL,
             viewCountText: nil,
             timePostedText: nil,
-            playlistId: isPlaylist ? contentId : nil
+            playlistId: isPlaylist ? contentId : nil,
+            feedbackTokens: tokens
         )
     }
 
@@ -968,6 +976,9 @@ extension ContentClient {
         let viewCount   = metadata?["shortViewCountText"] as? String
         let timePosted  = metadata?["publishedTimeText"]  as? String
 
+        // フィードバックトークン
+        let tokens = extractFeedbackTokens(from: data)
+
         return VideoItem(
             videoId: videoId,
             title: title,
@@ -976,8 +987,101 @@ extension ContentClient {
             thumbnailURL: thumbURL,
             channelAvatarURL: avatarURL,
             viewCountText: viewCount,
-            timePostedText: timePosted
+            timePostedText: timePosted,
+            feedbackTokens: tokens
         )
+    }
+    /// レンダラー JSON から feedbackToken を再帰的に抽出する。
+    /// menu > menuRenderer > items 内の feedbackEndpoint.feedbackToken を収集する。
+    static func extractFeedbackTokens(from json: Any) -> [String] {
+        var tokens: [String] = []
+        collectFeedbackTokens(in: json, tokens: &tokens)
+        return tokens
+    }
+
+    private static func collectFeedbackTokens(in json: Any, tokens: inout [String]) {
+        if let dict = json as? [String: Any] {
+            // feedbackEndpoint パターン
+            if let ep = dict["feedbackEndpoint"] as? [String: Any],
+               let token = ep["feedbackToken"] as? String {
+                tokens.append(token)
+                return
+            }
+            // dismissCommand パターン（新形式）
+            if let token = dict["feedbackToken"] as? String,
+               dict["feedbackEndpoint"] == nil {
+                // feedbackToken が直接存在する場合
+                tokens.append(token)
+                return
+            }
+            for (_, v) in dict { collectFeedbackTokens(in: v, tokens: &tokens) }
+        } else if let array = json as? [Any] {
+            for item in array { collectFeedbackTokens(in: item, tokens: &tokens) }
+        }
+    }
+}
+
+// MARK: - フィードバック送信
+
+extension ContentClient {
+
+    /// YouTube に feedbackToken を送信する（「興味なし」等）
+    static func sendFeedback(tokens: [String]) async throws {
+        guard !tokens.isEmpty else { return }
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/feedback?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
+
+        let body: [String: Any] = [
+            "feedbackTokens": tokens,
+            "isFeedbackTokenUnencrypted": false,
+            "shouldMerge": false,
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (_, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            strixLog("feedback 送信 HTTP \(http.statusCode)")
+        }
+    }
+    /// 動画を「後で見る」プレイリストに追加する
+    static func addToWatchLater(videoId: String) async throws {
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
+
+        let body: [String: Any] = [
+            "playlistId": "WL",
+            "actions": [
+                ["addedVideoId": videoId, "action": "ACTION_ADD_VIDEO"]
+            ],
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (_, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            strixLog("後で見る追加 HTTP \(http.statusCode)")
+        }
     }
 }
 

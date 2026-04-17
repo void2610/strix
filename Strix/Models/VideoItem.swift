@@ -24,10 +24,13 @@ struct VideoItem: Identifiable {
     let timePostedText: String?
     /// ミックスリスト・プレイリストの場合のプレイリストID
     let playlistId: String?
+    /// 「興味なし」等のフィードバック用トークン（ホームフィードで付与される）
+    let feedbackTokens: [String]
 
     init(videoId: String, title: String, channelId: String? = nil, channelName: String? = nil,
          thumbnailURL: URL? = nil, channelAvatarURL: URL? = nil,
-         viewCountText: String? = nil, timePostedText: String? = nil, playlistId: String? = nil) {
+         viewCountText: String? = nil, timePostedText: String? = nil, playlistId: String? = nil,
+         feedbackTokens: [String] = []) {
         self.videoId = videoId
         self.title = title
         self.channelId = channelId
@@ -37,6 +40,7 @@ struct VideoItem: Identifiable {
         self.viewCountText = viewCountText
         self.timePostedText = timePostedText
         self.playlistId = playlistId
+        self.feedbackTokens = feedbackTokens
     }
 }
 

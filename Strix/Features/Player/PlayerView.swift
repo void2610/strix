@@ -926,6 +926,19 @@ struct PlayerView: View {
                                 .padding(.vertical, 8)
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.url = URL(string: "https://youtu.be/\(video.videoId)")
+                            } label: {
+                                Label("リンクをコピー", systemImage: "doc.on.doc")
+                            }
+
+                            if let url = URL(string: "https://youtu.be/\(video.videoId)") {
+                                ShareLink(item: url) {
+                                    Label("共有", systemImage: "square.and.arrow.up")
+                                }
+                            }
+                        }
 
                         Divider()
                             .padding(.leading, 12)
