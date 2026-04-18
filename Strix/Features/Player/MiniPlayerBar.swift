@@ -73,8 +73,8 @@ struct MiniPlayerView: View {
     let onTap: () -> Void
     let onClose: () -> Void
 
-    private let videoWidth: CGFloat = 160
-    private let videoHeight: CGFloat = 90
+    private let videoWidth: CGFloat = 200
+    private let videoHeight: CGFloat = 112
     private let edgePadding: CGFloat = 12
 
     /// 現在のオフセット（右下の初期位置からの相対値）
@@ -84,24 +84,30 @@ struct MiniPlayerView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let safeArea = geo.safeAreaInsets
+            // .ignoresSafeArea() で safeAreaInsets が 0 になるため、
+            // UIWindow から実際の safe area を取得する
+            let windowInsets = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
+                .keyWindow?.safeAreaInsets ?? .zero
+            let safeTop = windowInsets.top
+            let safeBottom = windowInsets.bottom
             let screenW = geo.size.width
             let screenH = geo.size.height
+            let tabBarHeight: CGFloat = 49
 
             // 初期位置（右下）
-            let baseX = screenW - videoWidth - edgePadding - safeArea.trailing
-            let baseY = screenH - videoHeight - edgePadding - safeArea.bottom - 49
+            let baseX = screenW - videoWidth - edgePadding
+            let baseY = screenH - videoHeight - edgePadding - safeBottom - tabBarHeight
 
-            // クランプ範囲（offset として）
-            let minOX = edgePadding + safeArea.leading - baseX
+            // クランプ範囲（offset として。baseX/Y からの相対値）
+            let minOX = edgePadding - baseX
             let maxOX: CGFloat = 0
-            let minOY = edgePadding + safeArea.top - baseY
+            let minOY = edgePadding + safeTop - baseY
             let maxOY: CGFloat = 0
 
             let totalX = offset.width + dragDelta.width
             let totalY = offset.height + dragDelta.height
 
-            // ゴムバンド表示
+            // ゴムバンド効果: 範囲外は抵抗が増す
             let displayX = baseX + rubberBand(totalX, min: minOX, max: maxOX)
             let displayY = baseY + rubberBand(totalY, min: minOY, max: maxOY)
 
@@ -118,11 +124,11 @@ struct MiniPlayerView: View {
             .overlay(alignment: .topTrailing) {
                 Button(action: onClose) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
+                        .font(.subheadline)
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .black.opacity(0.5))
                 }
-                .offset(x: 6, y: -6)
+                .padding(6)
             }
             .frame(width: videoWidth, height: videoHeight)
             .position(x: displayX + videoWidth / 2, y: displayY + videoHeight / 2)
@@ -132,27 +138,17 @@ struct MiniPlayerView: View {
                         dragDelta = translation
                     },
                     onEnd: { translation, velocity in
-                        // ドラッグ分を offset に統合
-                        let newW = offset.width + translation.width
-                        let newH = offset.height + translation.height
-                        dragDelta = .zero
-
-                        // 速度から慣性の着地点を計算（減速距離）
+                        // 慣性の着地点（クランプ済み）
                         let decel: CGFloat = 800
                         let vxDist = velocity.width * abs(velocity.width) / (2 * decel)
                         let vyDist = velocity.height * abs(velocity.height) / (2 * decel)
-                        let targetW = clamp(newW + vxDist, min: minOX, max: maxOX)
-                        let targetH = clamp(newH + vyDist, min: minOY, max: maxOY)
+                        let targetW = clamp(offset.width + translation.width + vxDist, min: minOX, max: maxOX)
+                        let targetH = clamp(offset.height + translation.height + vyDist, min: minOY, max: maxOY)
 
-                        // アニメーションなしで統合位置を設定
-                        var t = Transaction()
-                        t.disablesAnimations = true
-                        withTransaction(t) {
-                            offset = CGSize(width: newW, height: newH)
-                        }
-
-                        // スプリングで最終位置へ
-                        withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
+                        // dragDelta のリセットと offset の最終位置設定を
+                        // 同じアニメーションブロックで行い、滑らかに遷移させる
+                        withAnimation(.smooth(duration: 0.4)) {
+                            dragDelta = .zero
                             offset = CGSize(width: targetW, height: targetH)
                         }
                     }
@@ -166,10 +162,10 @@ struct MiniPlayerView: View {
     private func rubberBand(_ value: CGFloat, min lo: CGFloat, max hi: CGFloat) -> CGFloat {
         if value < lo {
             let d = lo - value
-            return lo - d / (1 + d * 0.008)
+            return lo - d / (1 + d * 0.03)
         } else if value > hi {
             let d = value - hi
-            return hi + d / (1 + d * 0.008)
+            return hi + d / (1 + d * 0.03)
         }
         return value
     }
