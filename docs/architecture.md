@@ -27,9 +27,9 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
 ### ストリーム取得（YouTubeClient）
 
 3段フォールバック:
-1. **IOS クライアント**（HLS） — `adaptiveFormats` から音声のみ/映像+音声を取得
-2. **WEB クライアント**（combined formats）
-3. **WebPage**（WKWebView で YouTube ページを読み込み `ytInitialPlayerResponse` を抽出）
+1. **IOS クライアント**（HLS） — Cookie + SAPISIDHASH 認証。`hlsManifestUrl` を取得
+2. **WEB クライアント**（combined formats） — Cookie + SAPISIDHASH 認証。`formats` / `hlsManifestUrl` を取得
+3. **WebPage**（WKWebView + fetch/XHR インターセプト） — モバイル版 YouTube を読み込み、再生を開始させた後、`googlevideo.com/videoplayback` への fetch/XHR リクエストをフックして署名デコード済み URL を取得。combined format（itag 18/22）を優先
 
 ### プレイリスト編集（ContentClient）
 

@@ -684,11 +684,7 @@ extension ContentClient {
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
         let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse {
-            strixLog("Innertube browse[\(browseId)] HTTP \(http.statusCode)")
-        }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            strixLog("Innertube browse[\(browseId)] JSON パース失敗")
             return ([], nil)
         }
         let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
@@ -719,11 +715,7 @@ extension ContentClient {
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
         let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse {
-            strixLog("Innertube browse continuation HTTP \(http.statusCode)")
-        }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            strixLog("Innertube browse continuation JSON パース失敗")
             return ([], nil)
         }
         let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
@@ -1054,9 +1046,7 @@ extension ContentClient {
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
         let (_, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse {
-            strixLog("feedback 送信 HTTP \(http.statusCode)")
-        }
+        // レスポンスを消費（エラーハンドリングは呼び出し元に委譲）
     }
     /// 動画を「後で見る」プレイリストに追加する
     static func addToWatchLater(videoId: String) async throws {
@@ -1090,9 +1080,7 @@ extension ContentClient {
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
         let (_, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse {
-            strixLog("プレイリスト追加[\(rawId)] HTTP \(http.statusCode)")
-        }
+        _ = response
     }
 
     /// プレイリストから動画を削除する
@@ -1120,9 +1108,7 @@ extension ContentClient {
         sessionConfig.httpCookieAcceptPolicy = .never
         let session = URLSession(configuration: sessionConfig)
         let (_, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse {
-            strixLog("プレイリスト削除 HTTP \(http.statusCode)")
-        }
+        _ = response
     }
 }
 

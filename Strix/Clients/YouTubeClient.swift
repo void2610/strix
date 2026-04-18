@@ -204,7 +204,6 @@ extension YouTubeClient {
 
     @MainActor
     private static func fetchWithWebPage(videoID: String) async throws -> VideoInfo {
-        strixLog("player[WebPage] 開始: \(videoID)")
         let pageURL = URL(string: "https://m.youtube.com/watch?v=\(videoID)")!
 
         let config = WKWebViewConfiguration()
@@ -265,49 +264,28 @@ extension YouTubeClient {
         let session = URLSession(configuration: sessionConfig)
 
         let data: Data
-        let response: URLResponse
         do {
-            let (d, r) = try await session.data(for: request)
+            let (d, _) = try await session.data(for: request)
             data = d
-            response = r
         } catch {
-            strixLog("player HTTP エラー: \(error.localizedDescription)")
             throw YouTubeClientError.networkError(error)
         }
 
-        if let http = response as? HTTPURLResponse {
-            strixLog("player HTTP \(http.statusCode) size=\(data.count)")
-        }
-
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            let rawStr = String(data: data.prefix(1000), encoding: .utf8) ?? "nil"
-            strixLog("player JSON パース失敗 raw=\(rawStr)")
             throw YouTubeClientError.streamNotFound
-        }
-        // エラー時はレスポンスの一部をログに出す
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            let rawStr = String(data: data.prefix(500), encoding: .utf8) ?? "nil"
-            strixLog("player エラーレスポンス: \(rawStr)")
         }
 
         let playability = json["playabilityStatus"] as? [String: Any]
         let status = playability?["status"] as? String ?? ""
-        let reason = playability?["reason"] as? String
-        strixLog("player playability status=\(status) reason=\(reason ?? "none")")
-
-        // ストリーミングデータの有無をログ
-        let sd = json["streamingData"] as? [String: Any]
-        let hasHLS = sd?["hlsManifestUrl"] != nil
-        let hasFormats = (sd?["formats"] as? [[String: Any]])?.isEmpty == false
-        let hasAdaptive = (sd?["adaptiveFormats"] as? [[String: Any]])?.isEmpty == false
-        strixLog("player streamingData: hls=\(hasHLS) formats=\(hasFormats) adaptive=\(hasAdaptive)")
-
         if status != "OK" {
             // ステータスが OK でなくても streamingData があればそれを使う
-            if sd != nil, (hasHLS || hasFormats || hasAdaptive) {
-                strixLog("player status=\(status) だが streamingData あり、続行")
-            } else {
-                throw YouTubeClientError.notPlayable(reason ?? status)
+            let sd = json["streamingData"] as? [String: Any]
+            let hasStream = sd?["hlsManifestUrl"] != nil
+                || (sd?["formats"] as? [[String: Any]])?.isEmpty == false
+                || (sd?["adaptiveFormats"] as? [[String: Any]])?.isEmpty == false
+            if !hasStream {
+                let reason = playability?["reason"] as? String ?? status
+                throw YouTubeClientError.notPlayable(reason)
             }
         }
 
@@ -369,7 +347,7 @@ extension YouTubeClient {
 
 // MARK: - WKWebView ページ読み込みデリゲート
 
-/// YouTube ページを読み込んで ytInitialPlayerResponse から動画情報を抽出するデリゲート。
+/// YouTube モバイルページを読み込み、fetch/XHR インターセプトでストリーム URL を取得するデリゲート。
 private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
     let videoID: String
     private var continuation: CheckedContinuation<VideoInfo, Error>?
@@ -382,24 +360,19 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !hasResolved else { return }
-        strixLog("player[WebPage] ページ読み込み完了")
 
-        // 再生ボタンをクリックして動画を開始させる
+        // 再生ボタンをクリックして動画を開始させる（fetch/XHR インターセプトを発火）
         let clickJS = """
         (function() {
-            // プレイヤーのクリックを試行
             var btn = document.querySelector('.ytp-large-play-button, .ytp-play-button, button[aria-label*="再生"], button[aria-label*="Play"]');
-            if (btn) { btn.click(); return 'clicked button'; }
+            if (btn) { btn.click(); return; }
             var player = document.querySelector('#movie_player, .html5-video-player');
-            if (player) { player.click(); return 'clicked player'; }
+            if (player) { player.click(); return; }
             var video = document.querySelector('video');
-            if (video) { video.play(); return 'called play()'; }
-            return 'no target';
+            if (video) { video.play(); }
         })();
         """
-        webView.evaluateJavaScript(clickJS) { [weak self] result, _ in
-            strixLog("player[WebPage] 再生トリガー: \(result ?? "nil")")
-            // 少し待ってから video.src をポーリング
+        webView.evaluateJavaScript(clickJS) { [weak self] _, _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 self?.pollVideoSource(webView: webView, attempt: 1)
             }
@@ -449,9 +422,6 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                     URLComponents(string: url)?.queryItems?.first(where: { $0.name == "itag" })?.value
                 }
 
-                let allItags = streams.compactMap { itag(of: $0) }
-                strixLog("player[WebPage] poll \(attempt): \(streams.count)本 itags=\(allItags)")
-
                 // combined format（映像+音声一体）を優先: itag=18(360p), 22(720p)
                 let combinedItags = ["22", "18"]
                 var selectedURL: String?
@@ -462,9 +432,7 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                     }
                 }
 
-                // combined が見つかったら即座に返す
                 if let urlStr = selectedURL, let streamURL = URL(string: urlStr) {
-                    strixLog("player[WebPage] combined 取得成功 itag=\(itag(of: urlStr) ?? "?")")
                     let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
                     let audioURL = audioURLStr.flatMap { URL(string: $0) }
                     self.resolve(with: .success(VideoInfo(
@@ -476,10 +444,8 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                     return
                 }
 
-                // combined がない場合: まだ読み込み中かもしれないので少し待つ
-                // ただし最後の数回なら adaptive でフォールバック
+                // combined がない場合は最後の数回で adaptive にフォールバック
                 if attempt >= maxAttempts - 2, let firstURL = streams.first, let streamURL = URL(string: firstURL) {
-                    strixLog("player[WebPage] combined なし、フォールバック itag=\(itag(of: firstURL) ?? "?")")
                     let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
                     let audioURL = audioURLStr.flatMap { URL(string: $0) }
                     self.resolve(with: .success(VideoInfo(
@@ -493,17 +459,11 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                 // combined が見つかるまでもう少し待つ
             }
 
-            let count = (try? JSONSerialization.jsonObject(
-                with: (result as? String)?.data(using: .utf8) ?? Data()
-            ) as? [String: Any])?["streams"] as? [String]
-            strixLog("player[WebPage] poll \(attempt): streams=\(count?.count ?? 0)")
-
             if attempt < maxAttempts {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.pollVideoSource(webView: webView, attempt: attempt + 1)
                 }
             } else {
-                strixLog("player[WebPage] \(maxAttempts)回ポーリング後もストリーム取得失敗")
                 self.resolve(with: .failure(YouTubeClientError.streamNotFound))
             }
         }

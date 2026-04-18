@@ -86,7 +86,6 @@ final class HomeViewModel {
                 if !newVideos.isEmpty { return }  // 取得できたので完了
                 currentToken = nextToken           // 0件なら次のページを試みる
             } catch {
-                strixLog("loadMore エラー: \(error)")
                 return
             }
         }
@@ -97,10 +96,7 @@ final class HomeViewModel {
         do {
             let (result, token) = try await client.fetchHome()
             strixLog("loadFeed 成功 \(result.count)件 gen=\(generation) current=\(loadGeneration)")
-            guard generation == loadGeneration else {
-                strixLog("loadFeed 破棄（世代不一致）")
-                return
-            }
+            guard generation == loadGeneration else { return }
             videos = result
             continuationToken = token
         } catch {

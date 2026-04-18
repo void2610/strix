@@ -172,16 +172,11 @@ struct VideoInfo {
 }
 ```
 
-**Innertube /player 呼び出しの仕様:**
+**3段フォールバック:**
 
-| 項目 | 値 |
-|------|----|
-| エンドポイント | `POST https://www.youtube.com/youtubei/v1/player` |
-| クライアント | IOS（clientName: "IOS", clientVersion: "21.13.6"） |
-| User-Agent | `com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 26_4 like Mac OS X;)` |
-| X-Youtube-Client-Name | `5` |
-| Cookie | ログイン済みなら `AuthState.shared.cookieString` を付与 |
-| レスポンス | `streamingData.hlsManifestUrl`（iOS クライアントは通常動画でも HLS を返す） |
+1. **IOS クライアント** — HLS manifest URL を取得。Cookie + SAPISIDHASH 認証
+2. **WEB クライアント** — combined formats / HLS を取得。Cookie + SAPISIDHASH 認証
+3. **WebPage（WKWebView）** — モバイル版 YouTube を読み込み、JS で再生を開始。`fetch()` / `XMLHttpRequest.open()` をフックして `googlevideo.com/videoplayback` への署名デコード済み URL をインターセプト。combined format（itag 18/22）を優先選択
 
 **エラー種別:**
 ```swift

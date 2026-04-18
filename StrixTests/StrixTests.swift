@@ -1886,3 +1886,79 @@ struct PlayerViewModelCommentTests {
         #expect(vm.commentsContinuation == nil)
     }
 }
+
+// MARK: - YouTubeClient フォールバック ユニットテスト
+
+@MainActor
+struct YouTubeClientFallbackTests {
+
+    @Test func fetchVideoFallsBackOnFailure() async {
+        // IOS → WEB が失敗して最終的にエラーになるケース
+        let client = YouTubeClient(fetchVideo: { _ in
+            throw YouTubeClientError.streamNotFound
+        })
+        do {
+            _ = try await client.fetchVideo("test")
+            #expect(Bool(false), "エラーが発生するべき")
+        } catch {
+            #expect(error is YouTubeClientError)
+        }
+    }
+
+    @Test func fetchVideoReturnsVideoInfo() async throws {
+        let url = URL(string: "https://example.com/stream.mp4")!
+        let client = YouTubeClient(fetchVideo: { _ in
+            VideoInfo(
+                streamURL: url, audioOnlyURL: nil,
+                title: "テスト動画", thumbnailURL: "https://example.com/thumb.jpg",
+                channelId: "UC123", channelName: "テストチャンネル",
+                channelAvatarURL: nil, playbackTrackingURLs: nil
+            )
+        })
+        let info = try await client.fetchVideo("abc")
+        #expect(info.streamURL == url)
+        #expect(info.title == "テスト動画")
+        #expect(info.channelName == "テストチャンネル")
+    }
+}
+
+// MARK: - MiniPlayerView 表示モードテスト
+
+@MainActor
+struct MiniPlayerCoordinatorTests {
+
+    @Test func minimizePreservesVideoID() {
+        let c = PlayerCoordinator()
+        c.play(videoID: "vid1")
+        c.minimize()
+        #expect(c.mode == .miniPlayer)
+        #expect(c.currentVideoID == "vid1")
+    }
+
+    @Test func expandFromMiniPlayer() {
+        let c = PlayerCoordinator()
+        c.play(videoID: "vid1")
+        c.minimize()
+        c.expand()
+        #expect(c.mode == .fullScreen)
+        #expect(c.currentVideoID == "vid1")
+    }
+
+    @Test func playNewVideoWhileMiniPlayer() {
+        let c = PlayerCoordinator()
+        c.play(videoID: "vid1")
+        c.minimize()
+        c.play(videoID: "vid2")
+        #expect(c.mode == .fullScreen)
+        #expect(c.currentVideoID == "vid2")
+    }
+
+    @Test func dismissFromMiniPlayer() {
+        let c = PlayerCoordinator()
+        c.play(videoID: "vid1")
+        c.minimize()
+        c.dismiss()
+        #expect(c.mode == .hidden)
+        #expect(c.currentVideoID == nil)
+    }
+}
