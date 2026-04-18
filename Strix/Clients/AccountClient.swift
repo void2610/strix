@@ -93,9 +93,24 @@ extension AccountClient {
                         guard let continuation else { break }
                         response.mergeWithContinuation(continuation)
                     }
+                    let setVideoIds = response.videoIdsInPlaylist ?? []
                     let videos = response.results
-                        .compactMap { $0 as? YTVideo }
-                        .map { $0.toVideoItem }
+                        .enumerated()
+                        .compactMap { (i, result) -> VideoItem? in
+                            guard let ytVideo = result as? YTVideo else { return nil }
+                            var item = ytVideo.toVideoItem
+                            // setVideoId をプレイリストレスポンスから注入
+                            if i < setVideoIds.count, let svid = setVideoIds[i] {
+                                item = VideoItem(
+                                    videoId: item.videoId, title: item.title,
+                                    channelId: item.channelId, channelName: item.channelName,
+                                    thumbnailURL: item.thumbnailURL, channelAvatarURL: item.channelAvatarURL,
+                                    viewCountText: item.viewCountText, timePostedText: item.timePostedText,
+                                    feedbackTokens: item.feedbackTokens, setVideoId: svid
+                                )
+                            }
+                            return item
+                        }
                     if !videos.isEmpty { return videos }
                 }
                 // YouTubeKit で取れなかった場合は Innertube 直接呼び出しにフォールバック

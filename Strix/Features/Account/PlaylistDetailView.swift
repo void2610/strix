@@ -29,6 +29,23 @@ final class PlaylistDetailViewModel {
         }
         isLoading = false
     }
+
+    /// プレイリストから動画を削除する
+    func remove(video: VideoItem, from playlistId: String) async {
+        guard let setVideoId = video.setVideoId else { return }
+        // プレイリストIDからVLプレフィックスを除去
+        let rawPlaylistId = playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId
+        do {
+            try await ContentClient.removeFromPlaylist(
+                playlistId: rawPlaylistId,
+                videoId: video.videoId,
+                setVideoId: setVideoId
+            )
+            videos.removeAll { $0.videoId == video.videoId && $0.setVideoId == setVideoId }
+        } catch {
+            strixLog("プレイリスト削除エラー: \(error)")
+        }
+    }
 }
 
 struct PlaylistDetailView: View {
@@ -78,6 +95,19 @@ struct PlaylistDetailView: View {
                             VideoRowView(video: video)
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            if video.setVideoId != nil {
+                                Button(role: .destructive) {
+                                    Task {
+                                        await vm.remove(video: video, from: playlist.playlistId)
+                                    }
+                                } label: {
+                                    Label("プレイリストから削除", systemImage: "trash")
+                                }
+                            }
+
+                            AddToPlaylistMenu(videoId: video.videoId)
+                        }
                     }
                 }
                 .listStyle(.plain)

@@ -66,7 +66,8 @@ Strix/
 │   │   ├── HistoryView.swift         # YouTube 視聴履歴（日付グループ）
 │   │   └── PlaylistDetailView.swift  # プレイリスト動画一覧
 │   └── Components/
-│       └── VideoCardView.swift       # VideoCardView / VideoRowView 共通コンポーネント
+│       ├── VideoCardView.swift       # VideoCardView / VideoRowView 共通コンポーネント
+│       └── AddToPlaylistMenu.swift   # コンテキストメニュー用プレイリスト追加サブメニュー
 └── Utilities/
     ├── AppLogger.swift               # アプリ内ログシステム
     ├── VideoID.swift                 # YouTube URL/動画 ID パーサー
@@ -96,6 +97,8 @@ struct VideoItem: Identifiable {
     let channelAvatarURL: URL?
     let viewCountText: String?
     let timePostedText: String?
+    let feedbackTokens: [String]   // フィードバック用トークン
+    let setVideoId: String?        // プレイリストエントリ固有ID（削除用）
 }
 ```
 
@@ -554,9 +557,25 @@ final class PlaylistDetailViewModel {
 
 `YTPlaylist` を受け取り、`playlist.playlistId` でコンテンツを取得する。
 
+**コンテキストメニュー:** 各動画を長押しすると以下の操作が可能：
+- **プレイリストから削除**: `ContentClient.removeFromPlaylist()` で Innertube `edit_playlist` API（`ACTION_REMOVE_VIDEO`）を呼び出す。`setVideoId` が必要。
+- **プレイリストに追加**: `AddToPlaylistMenu` サブメニューからアカウント内の任意プレイリストに追加。
+
 ---
 
-### 5.9 共通コンポーネント（VideoCardView.swift）
+### 5.9 AddToPlaylistMenu — プレイリスト追加サブメニュー
+
+コンテキストメニュー内に配置するサブメニューコンポーネント。`PlaylistMenuState`（シングルトン）がアカウントのプレイリスト一覧を60秒キャッシュで保持する。
+
+```swift
+AddToPlaylistMenu(videoId: video.videoId)
+```
+
+ホームフィード・関連動画・プレイリスト詳細の全コンテキストメニューで使用。
+
+---
+
+### 5.10 共通コンポーネント（VideoCardView.swift）
 
 #### VideoCardView（ホームフィード用）
 

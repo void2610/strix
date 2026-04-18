@@ -951,6 +951,8 @@ struct PlayerView: View {
                             } label: {
                                 Label("後で見る", systemImage: "clock")
                             }
+
+                            AddToPlaylistMenu(videoId: video.videoId)
                         }
 
                         Divider()

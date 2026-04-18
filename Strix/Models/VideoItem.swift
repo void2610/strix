@@ -26,11 +26,13 @@ struct VideoItem: Identifiable {
     let playlistId: String?
     /// 「興味なし」等のフィードバック用トークン（ホームフィードで付与される）
     let feedbackTokens: [String]
+    /// プレイリスト内エントリ固有ID（プレイリストからの削除に必要）
+    let setVideoId: String?
 
     init(videoId: String, title: String, channelId: String? = nil, channelName: String? = nil,
          thumbnailURL: URL? = nil, channelAvatarURL: URL? = nil,
          viewCountText: String? = nil, timePostedText: String? = nil, playlistId: String? = nil,
-         feedbackTokens: [String] = []) {
+         feedbackTokens: [String] = [], setVideoId: String? = nil) {
         self.videoId = videoId
         self.title = title
         self.channelId = channelId
@@ -41,6 +43,7 @@ struct VideoItem: Identifiable {
         self.timePostedText = timePostedText
         self.playlistId = playlistId
         self.feedbackTokens = feedbackTokens
+        self.setVideoId = setVideoId
     }
 }
 

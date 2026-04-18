@@ -31,6 +31,12 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
 2. **WEB クライアント**（combined formats）
 3. **WebPage**（WKWebView で YouTube ページを読み込み `ytInitialPlayerResponse` を抽出）
 
+### プレイリスト編集（ContentClient）
+
+Innertube `/browse/edit_playlist` エンドポイントで以下の操作を実行：
+- `addToPlaylist(playlistId:videoId:)` — 任意プレイリストへの動画追加（`ACTION_ADD_VIDEO`）
+- `removeFromPlaylist(playlistId:videoId:setVideoId:)` — プレイリストからの動画削除（`ACTION_REMOVE_VIDEO`、`setVideoId` 必須）
+
 ### アカウント情報（AccountClient）
 
 Innertube WEB client でライブラリ・プレイリスト一覧を取得。

@@ -1696,6 +1696,71 @@ struct VideoItemFeedbackTests {
     }
 }
 
+// MARK: - VideoItem setVideoId テスト
+
+struct VideoItemSetVideoIdTests {
+
+    @Test func videoItemDefaultsToNilSetVideoId() {
+        let item = VideoItem(videoId: "abc", title: "テスト")
+        #expect(item.setVideoId == nil)
+    }
+
+    @Test func videoItemStoresSetVideoId() {
+        let item = VideoItem(videoId: "abc", title: "テスト", setVideoId: "SVabc123")
+        #expect(item.setVideoId == "SVabc123")
+    }
+
+    @Test func parseVideoRendererExtractsSetVideoId() {
+        let renderer: [String: Any] = [
+            "videoId": "vid1",
+            "title": ["runs": [["text": "テスト動画"]]],
+            "thumbnail": ["thumbnails": [["url": "https://example.com/thumb.jpg"]]],
+            "setVideoId": "SVid123456"
+        ]
+        let item = ContentClient.parseVideoRenderer(renderer)
+        #expect(item != nil)
+        #expect(item?.videoId == "vid1")
+        #expect(item?.setVideoId == "SVid123456")
+    }
+
+    @Test func parseVideoRendererOmitsSetVideoIdWhenAbsent() {
+        let renderer: [String: Any] = [
+            "videoId": "vid2",
+            "title": ["runs": [["text": "通常動画"]]],
+            "thumbnail": ["thumbnails": [["url": "https://example.com/thumb.jpg"]]]
+        ]
+        let item = ContentClient.parseVideoRenderer(renderer)
+        #expect(item != nil)
+        #expect(item?.setVideoId == nil)
+    }
+}
+
+// MARK: - PlaylistDetailViewModel 削除テスト
+
+@MainActor
+struct PlaylistDetailViewModelRemoveTests {
+
+    @Test func removeDeletesVideoFromList() async {
+        let videos = [
+            VideoItem(videoId: "v1", title: "動画1", setVideoId: "SV001"),
+            VideoItem(videoId: "v2", title: "動画2", setVideoId: "SV002"),
+            VideoItem(videoId: "v3", title: "動画3", setVideoId: "SV003")
+        ]
+        let accountClient = AccountClient.mock(
+            fetchPlaylistVideos: { _ in videos }
+        )
+        let vm = PlaylistDetailViewModel(accountClient: accountClient)
+        await vm.load(playlistId: "VLPL123")
+
+        #expect(vm.videos.count == 3)
+
+        // setVideoId が nil の場合は削除しない
+        let noSetVideoId = VideoItem(videoId: "v1", title: "動画1")
+        await vm.remove(video: noSetVideoId, from: "VLPL123")
+        #expect(vm.videos.count == 3)
+    }
+}
+
 // MARK: - PlayerViewModel コメント ユニットテスト
 
 @MainActor

@@ -844,6 +844,9 @@ extension ContentClient {
         // フィードバックトークン（「興味なし」等）
         let tokens = extractFeedbackTokens(from: vr)
 
+        // プレイリストエントリ固有ID（playlistVideoRenderer に含まれる）
+        let setVideoId = vr["setVideoId"] as? String
+
         return VideoItem(
             videoId: videoId,
             title: title,
@@ -853,7 +856,8 @@ extension ContentClient {
             channelAvatarURL: avatarURL,
             viewCountText: viewCount,
             timePostedText: timePosted,
-            feedbackTokens: tokens
+            feedbackTokens: tokens,
+            setVideoId: setVideoId
         )
     }
 
@@ -1056,6 +1060,13 @@ extension ContentClient {
     }
     /// 動画を「後で見る」プレイリストに追加する
     static func addToWatchLater(videoId: String) async throws {
+        try await addToPlaylist(playlistId: "WL", videoId: videoId)
+    }
+
+    /// 動画を任意のプレイリストに追加する
+    static func addToPlaylist(playlistId: String, videoId: String) async throws {
+        // VLプレフィックスを除去してAPIに渡す
+        let rawId = playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1066,7 +1077,7 @@ extension ContentClient {
         applyAuth(to: &request)
 
         let body: [String: Any] = [
-            "playlistId": "WL",
+            "playlistId": rawId,
             "actions": [
                 ["addedVideoId": videoId, "action": "ACTION_ADD_VIDEO"]
             ],
@@ -1080,7 +1091,37 @@ extension ContentClient {
         let session = URLSession(configuration: sessionConfig)
         let (_, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse {
-            strixLog("後で見る追加 HTTP \(http.statusCode)")
+            strixLog("プレイリスト追加[\(rawId)] HTTP \(http.statusCode)")
+        }
+    }
+
+    /// プレイリストから動画を削除する
+    static func removeFromPlaylist(playlistId: String, videoId: String, setVideoId: String) async throws {
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
+
+        let body: [String: Any] = [
+            "playlistId": playlistId,
+            "actions": [
+                ["setVideoId": setVideoId, "removedVideoId": videoId, "action": "ACTION_REMOVE_VIDEO"]
+            ],
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (_, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            strixLog("プレイリスト削除 HTTP \(http.statusCode)")
         }
     }
 }
