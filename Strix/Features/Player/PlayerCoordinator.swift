@@ -22,6 +22,8 @@ final class PlayerCoordinator {
     var currentVideoID: String?
     var playlistQueue: [VideoItem] = []
     var initialIndex: Int = 0
+    /// フルスクリーン時の下方向ドラッグオフセット（PlayerView の playerSection から更新）
+    var dragOffset: CGFloat = 0
 
     /// 任意のビューから動画再生を開始する
     func play(videoID: String, playlistQueue: [VideoItem] = [], initialIndex: Int = 0) {

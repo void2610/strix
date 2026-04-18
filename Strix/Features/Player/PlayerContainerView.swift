@@ -14,8 +14,6 @@ struct PlayerContainerView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var vm = PlayerViewModel()
-    /// ドラッグ中のオフセット。onChanged でアニメーションなしに直接更新。
-    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
@@ -78,46 +76,8 @@ struct PlayerContainerView: View {
                         }
                 }
             }
-
-            // 映像エリア上の透明ドラッグキャッチャー
-            // 画面幅 × 9/16（映像）+ ナビバー・safe area 分を加算して映像全体をカバー
-            Color.clear
-                .frame(height: geo.size.width * 9 / 16 + geo.safeAreaInsets.top + 44)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 12, coordinateSpace: .global)
-                        .onChanged { value in
-                            let ty = value.translation.height
-                            if ty > 0 {
-                                // アニメーションなしで直接追従
-                                var t = Transaction()
-                                t.disablesAnimations = true
-                                withTransaction(t) {
-                                    dragOffset = ty
-                                }
-                            }
-                        }
-                        .onEnded { value in
-                            let ty = value.translation.height
-                            let vy = value.predictedEndTranslation.height
-                            if ty > screenHeight * 0.15 || vy > 300 {
-                                // 画面外へ飛ばしてからミニプレイヤーに切り替える
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    dragOffset = screenHeight
-                                } completion: {
-                                    dragOffset = 0
-                                    coordinator.minimize()
-                                }
-                            } else {
-                                // 元に戻す
-                                withAnimation(.snappy(duration: 0.25)) {
-                                    dragOffset = 0
-                                }
-                            }
-                        }
-                )
         }
-        .offset(y: dragOffset)
+        .offset(y: coordinator.dragOffset)
         .transition(.move(edge: .bottom))
     }
 

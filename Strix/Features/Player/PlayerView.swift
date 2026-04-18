@@ -380,11 +380,13 @@ struct PlayerView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                // 動画プレイヤー（画面幅 × 16:9）
-                playerSection
+        VStack(spacing: 0) {
+            // 動画プレイヤー（画面上部に固定、スクロールしない）
+            playerSection
 
+            // 下部コンテンツ（動画の後ろをスクロール）
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
                 // コントロールボタン（ループ・自動再生・倍速）
                 if !vm.isLoadingStream && vm.streamError == nil {
                     HStack(spacing: 8) {
@@ -467,6 +469,7 @@ struct PlayerView: View {
                 // 関連動画
                 relatedSection
             }
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: scenePhase) { _, newPhase in
@@ -507,38 +510,71 @@ struct PlayerView: View {
     // MARK: - プレイヤー
 
     private var playerSection: some View {
-        ZStack {
-            Color.black
-                .aspectRatio(16 / 9, contentMode: .fit)
-
+        Group {
             if vm.isLoadingStream {
-                ProgressView()
-                    .tint(.white)
+                Color.black
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .overlay { ProgressView().tint(.white) }
             } else if vm.streamError != nil {
-                VStack(spacing: 12) {
-                    ContentUnavailableView(
-                        "再生できません",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(vm.streamError?.localizedDescription ?? "")
-                    )
-                    // ボット検出の場合は認証ボタンを表示
-                    if vm.isBotDetected {
-                        Button {
-                            showBotVerify = true
-                        } label: {
-                            Label("YouTubeで認証する", systemImage: "globe")
-                                .font(.subheadline.bold())
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 10)
-                                .background(.white.opacity(0.2), in: Capsule())
+                Color.black
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .overlay {
+                        VStack(spacing: 12) {
+                            ContentUnavailableView(
+                                "再生できません",
+                                systemImage: "exclamationmark.triangle",
+                                description: Text(vm.streamError?.localizedDescription ?? "")
+                            )
+                            if vm.isBotDetected {
+                                Button {
+                                    showBotVerify = true
+                                } label: {
+                                    Label("YouTubeで認証する", systemImage: "globe")
+                                        .font(.subheadline.bold())
+                                        .padding(.horizontal, 20)
+                                        .padding(.vertical, 10)
+                                        .background(.white.opacity(0.2), in: Capsule())
+                                }
+                            }
+                        }
+                        .colorScheme(.dark)
+                    }
+            } else if let player = vm.player {
+                AVPlayerLayerView(player: player)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onChanged { value in
+                    let ty = value.translation.height
+                    let tx = abs(value.translation.width)
+                    if ty > 0, ty > tx {
+                        var t = Transaction()
+                        t.disablesAnimations = true
+                        withTransaction(t) {
+                            coordinator.dragOffset = ty
                         }
                     }
                 }
-                .colorScheme(.dark)
-            } else if let player = vm.player {
-                AVPlayerLayerView(player: player)
-            }
-        }
+                .onEnded { value in
+                    let ty = value.translation.height
+                    let vy = value.predictedEndTranslation.height
+                    let screenHeight = UIScreen.main.bounds.height
+                    if ty > screenHeight * 0.15 || vy > 300 {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            coordinator.dragOffset = screenHeight
+                        } completion: {
+                            coordinator.dragOffset = 0
+                            coordinator.minimize()
+                        }
+                    } else {
+                        withAnimation(.snappy(duration: 0.25)) {
+                            coordinator.dragOffset = 0
+                        }
+                    }
+                }
+        )
     }
 
     // MARK: - タイトル・メタ情報
