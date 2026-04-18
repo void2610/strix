@@ -36,10 +36,7 @@ struct PlayerContainerView: View {
                         },
                         onClose: { dismissPlayer() }
                     )
-                    .padding(.trailing, 12)
-                    .padding(.bottom, tabBarHeight + 8)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .transition(.scale(scale: 0.5, anchor: .bottomTrailing).combined(with: .opacity))
+                    .transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

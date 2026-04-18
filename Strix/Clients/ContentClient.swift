@@ -261,11 +261,11 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         applyAuth(to: &request)
         var body: [String: Any] = [
             "browseId": browseId,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
         ]
         if let params { body["params"] = params }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -382,10 +382,10 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         applyAuth(to: &request)
         var body: [String: Any] = params
-        body["context"] = ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+        body["context"] = ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let sessionConfig = URLSessionConfiguration.ephemeral
@@ -669,12 +669,12 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         applyAuth(to: &request)
 
         let body: [String: Any] = [
             "browseId": browseId,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -705,12 +705,12 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         applyAuth(to: &request)
 
         let body: [String: Any] = [
             "continuation": continuation,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -1038,14 +1038,14 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         applyAuth(to: &request)
 
         let body: [String: Any] = [
             "feedbackTokens": tokens,
             "isFeedbackTokenUnencrypted": false,
             "shouldMerge": false,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -1073,7 +1073,7 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         applyAuth(to: &request)
 
         let body: [String: Any] = [
@@ -1081,7 +1081,7 @@ extension ContentClient {
             "actions": [
                 ["addedVideoId": videoId, "action": "ACTION_ADD_VIDEO"]
             ],
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -1103,7 +1103,7 @@ extension ContentClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         applyAuth(to: &request)
 
         let body: [String: Any] = [
@@ -1111,7 +1111,7 @@ extension ContentClient {
             "actions": [
                 ["setVideoId": setVideoId, "removedVideoId": videoId, "action": "ACTION_REMOVE_VIDEO"]
             ],
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20241201.01.00", "hl": "ja", "gl": "JP"]]
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

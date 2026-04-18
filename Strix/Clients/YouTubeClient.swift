@@ -84,15 +84,20 @@ extension YouTubeClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(
-            "com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 18_1 like Mac OS X;)",
+            "com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 18_4 like Mac OS X;)",
             forHTTPHeaderField: "User-Agent"
         )
         request.setValue("5", forHTTPHeaderField: "X-Youtube-Client-Name")
         request.setValue("21.13.6", forHTTPHeaderField: "X-Youtube-Client-Version")
 
-        // IOS クライアントは Cookie のみ
+        // Cookie + SAPISIDHASH 認証
         if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
-            request.setValue(ContentClient.deduplicateCookies(cookies), forHTTPHeaderField: "Cookie")
+            let deduped = ContentClient.deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = ContentClient.buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
         }
 
         let body: [String: Any] = [
@@ -106,7 +111,7 @@ extension YouTubeClient {
                     "deviceMake": "Apple",
                     "deviceModel": "iPhone16,2",
                     "osName": "iPhone",
-                    "osVersion": "18.1.23B74",
+                    "osVersion": "18.4.0",
                     "hl": "ja",
                     "gl": "JP"
                 ]
@@ -140,23 +145,16 @@ extension YouTubeClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
             forHTTPHeaderField: "User-Agent"
         )
         request.setValue("1", forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue("2.20250415.01.00", forHTTPHeaderField: "X-Youtube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
 
         // Cookie + SAPISIDHASH 認証
-        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
-            let deduped = ContentClient.deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = ContentClient.buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-        }
+        ContentClient.applyAuth(to: &request)
 
         let body: [String: Any] = [
             "videoId": videoID,
@@ -165,7 +163,7 @@ extension YouTubeClient {
             "context": [
                 "client": [
                     "clientName": "WEB",
-                    "clientVersion": "2.20241201.01.00",
+                    "clientVersion": "2.20250415.01.00",
                     "hl": "ja",
                     "gl": "JP"
                 ]
@@ -207,18 +205,44 @@ extension YouTubeClient {
     @MainActor
     private static func fetchWithWebPage(videoID: String) async throws -> VideoInfo {
         strixLog("player[WebPage] 開始: \(videoID)")
-        let pageURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
+        let pageURL = URL(string: "https://m.youtube.com/watch?v=\(videoID)")!
 
-        // 永続 DataStore を使って認証済み WKWebView を作成
         let config = WKWebViewConfiguration()
         config.websiteDataStore = AuthState.shared.dataStore ?? .default()
-        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
 
-        // ページ読み込み
+        // googlevideo.com への fetch/XHR をインターセプトするスクリプト
+        let interceptScript = WKUserScript(source: """
+        (function() {
+            window.__strix_streams = [];
+            var origFetch = window.fetch;
+            window.fetch = function() {
+                var url = arguments[0];
+                if (typeof url === 'string' && url.includes('googlevideo.com/videoplayback')) {
+                    window.__strix_streams.push(url);
+                } else if (url && url.url && url.url.includes('googlevideo.com/videoplayback')) {
+                    window.__strix_streams.push(url.url);
+                }
+                return origFetch.apply(this, arguments);
+            };
+            var origXHR = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function() {
+                if (arguments[1] && typeof arguments[1] === 'string' && arguments[1].includes('googlevideo.com/videoplayback')) {
+                    window.__strix_streams.push(arguments[1]);
+                }
+                return origXHR.apply(this, arguments);
+            };
+        })();
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        config.userContentController.addUserScript(interceptScript)
+
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 375, height: 667), configuration: config)
+        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1"
+
         return try await withCheckedThrowingContinuation { continuation in
             let delegate = WebPagePlayerDelegate(videoID: videoID, continuation: continuation)
             webView.navigationDelegate = delegate
-            // delegate の参照を保持
             objc_setAssociatedObject(webView, "delegate", delegate, .OBJC_ASSOCIATION_RETAIN)
             webView.load(URLRequest(url: pageURL))
         }
@@ -234,22 +258,50 @@ extension YouTubeClient {
         let session = URLSession(configuration: sessionConfig)
 
         let data: Data
+        let response: URLResponse
         do {
-            let (d, _) = try await session.data(for: request)
+            let (d, r) = try await session.data(for: request)
             data = d
+            response = r
         } catch {
+            strixLog("player HTTP エラー: \(error.localizedDescription)")
             throw YouTubeClientError.networkError(error)
         }
 
+        if let http = response as? HTTPURLResponse {
+            strixLog("player HTTP \(http.statusCode) size=\(data.count)")
+        }
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let rawStr = String(data: data.prefix(1000), encoding: .utf8) ?? "nil"
+            strixLog("player JSON パース失敗 raw=\(rawStr)")
             throw YouTubeClientError.streamNotFound
+        }
+        // エラー時はレスポンスの一部をログに出す
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let rawStr = String(data: data.prefix(500), encoding: .utf8) ?? "nil"
+            strixLog("player エラーレスポンス: \(rawStr)")
         }
 
         let playability = json["playabilityStatus"] as? [String: Any]
         let status = playability?["status"] as? String ?? ""
+        let reason = playability?["reason"] as? String
+        strixLog("player playability status=\(status) reason=\(reason ?? "none")")
+
+        // ストリーミングデータの有無をログ
+        let sd = json["streamingData"] as? [String: Any]
+        let hasHLS = sd?["hlsManifestUrl"] != nil
+        let hasFormats = (sd?["formats"] as? [[String: Any]])?.isEmpty == false
+        let hasAdaptive = (sd?["adaptiveFormats"] as? [[String: Any]])?.isEmpty == false
+        strixLog("player streamingData: hls=\(hasHLS) formats=\(hasFormats) adaptive=\(hasAdaptive)")
+
         if status != "OK" {
-            let reason = playability?["reason"] as? String ?? status
-            throw YouTubeClientError.notPlayable(reason)
+            // ステータスが OK でなくても streamingData があればそれを使う
+            if sd != nil, (hasHLS || hasFormats || hasAdaptive) {
+                strixLog("player status=\(status) だが streamingData あり、続行")
+            } else {
+                throw YouTubeClientError.notPlayable(reason ?? status)
+            }
         }
 
         return json
@@ -323,41 +375,27 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !hasResolved else { return }
+        strixLog("player[WebPage] ページ読み込み完了")
 
-        // JavaScript でページから ytInitialPlayerResponse を抽出
-        let js = """
+        // 再生ボタンをクリックして動画を開始させる
+        let clickJS = """
         (function() {
-            try {
-                if (typeof ytInitialPlayerResponse !== 'undefined') {
-                    return JSON.stringify(ytInitialPlayerResponse);
-                }
-                var scripts = document.querySelectorAll('script');
-                for (var i = 0; i < scripts.length; i++) {
-                    var text = scripts[i].textContent;
-                    var match = text.match(/var ytInitialPlayerResponse\\s*=\\s*(\\{.+?\\});/);
-                    if (match) return match[1];
-                    match = text.match(/ytInitialPlayerResponse\\s*=\\s*(\\{.+?\\});/);
-                    if (match) return match[1];
-                }
-                return null;
-            } catch(e) { return null; }
+            // プレイヤーのクリックを試行
+            var btn = document.querySelector('.ytp-large-play-button, .ytp-play-button, button[aria-label*="再生"], button[aria-label*="Play"]');
+            if (btn) { btn.click(); return 'clicked button'; }
+            var player = document.querySelector('#movie_player, .html5-video-player');
+            if (player) { player.click(); return 'clicked player'; }
+            var video = document.querySelector('video');
+            if (video) { video.play(); return 'called play()'; }
+            return 'no target';
         })();
         """
-
-        webView.evaluateJavaScript(js) { [weak self] result, error in
-            guard let self, !self.hasResolved else { return }
-
-            guard let jsonString = result as? String,
-                  let jsonData = jsonString.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                // ページ読み込み完了時にまだ取得できない場合は少し待って再試行
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    self.retryExtraction(webView: webView)
-                }
-                return
+        webView.evaluateJavaScript(clickJS) { [weak self] result, _ in
+            strixLog("player[WebPage] 再生トリガー: \(result ?? "nil")")
+            // 少し待ってから video.src をポーリング
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                self?.pollVideoSource(webView: webView, attempt: 1)
             }
-
-            self.resolveWithJSON(json)
         }
     }
 
@@ -365,73 +403,72 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
         resolve(with: .failure(YouTubeClientError.networkError(error)))
     }
 
-    private func retryExtraction(webView: WKWebView) {
+    /// fetch/XHR インターセプトで取得した googlevideo.com URL をポーリングで取得する。
+    private func pollVideoSource(webView: WKWebView, attempt: Int) {
         guard !hasResolved else { return }
+        let maxAttempts = 15
 
         let js = """
         (function() {
+            var v = document.querySelector('video');
+            if (v && v.paused) { try { v.play(); } catch(e) {} }
+            var streams = window.__strix_streams || [];
+            var title = '';
+            var thumb = '';
             try {
-                if (typeof ytInitialPlayerResponse !== 'undefined') {
-                    return JSON.stringify(ytInitialPlayerResponse);
-                }
-                return null;
-            } catch(e) { return null; }
+                var meta = document.querySelector('meta[property="og:title"]');
+                if (meta) title = meta.content;
+                var thumbMeta = document.querySelector('meta[property="og:image"]');
+                if (thumbMeta) thumb = thumbMeta.content;
+                if (!title) title = document.title.replace(' - YouTube', '');
+            } catch(e) {}
+            return JSON.stringify({streams: streams, title: title, thumbnail: thumb});
         })();
         """
 
         webView.evaluateJavaScript(js) { [weak self] result, _ in
             guard let self, !self.hasResolved else { return }
-            guard let jsonString = result as? String,
-                  let jsonData = jsonString.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                self.resolve(with: .failure(YouTubeClientError.streamNotFound))
-                return
+
+            if let jsonStr = result as? String,
+               let data = jsonStr.data(using: .utf8),
+               let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let streams = info["streams"] as? [String], !streams.isEmpty {
+
+                let title = info["title"] as? String ?? self.videoID
+                let thumbnail = info["thumbnail"] as? String ?? ""
+
+                // video/mp4 の URL を優先、なければ最初の URL
+                let videoURL = streams.first(where: { $0.contains("mime=video") }) ?? streams.first!
+                strixLog("player[WebPage] ストリーム取得成功 (attempt \(attempt), \(streams.count)本)")
+
+                if let streamURL = URL(string: videoURL) {
+                    // 音声 URL も探す
+                    let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
+                    let audioURL = audioURLStr.flatMap { URL(string: $0) }
+                    self.resolve(with: .success(VideoInfo(
+                        streamURL: streamURL, audioOnlyURL: audioURL,
+                        title: title, thumbnailURL: thumbnail,
+                        channelId: nil, channelName: nil,
+                        channelAvatarURL: nil, playbackTrackingURLs: nil
+                    )))
+                    return
+                }
             }
-            self.resolveWithJSON(json)
+
+            let count = (try? JSONSerialization.jsonObject(
+                with: (result as? String)?.data(using: .utf8) ?? Data()
+            ) as? [String: Any])?["streams"] as? [String]
+            strixLog("player[WebPage] poll \(attempt): streams=\(count?.count ?? 0)")
+
+            if attempt < maxAttempts {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.pollVideoSource(webView: webView, attempt: attempt + 1)
+                }
+            } else {
+                strixLog("player[WebPage] \(maxAttempts)回ポーリング後もストリーム取得失敗")
+                self.resolve(with: .failure(YouTubeClientError.streamNotFound))
+            }
         }
-    }
-
-    private func resolveWithJSON(_ json: [String: Any]) {
-        let playability = json["playabilityStatus"] as? [String: Any]
-        let status = playability?["status"] as? String ?? ""
-        if status != "OK" {
-            let reason = playability?["reason"] as? String ?? status
-            resolve(with: .failure(YouTubeClientError.notPlayable(reason)))
-            return
-        }
-
-        let videoDetails = json["videoDetails"] as? [String: Any]
-        let title = videoDetails?["title"] as? String ?? videoID
-        let thumbnails = (videoDetails?["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
-        let thumbnailURL = thumbnails?.last?["url"] as? String ?? ""
-        let channelId = videoDetails?["channelId"] as? String
-        let channelName = videoDetails?["author"] as? String
-
-        let streamingData = json["streamingData"] as? [String: Any]
-
-        // トラッキング URL
-        var trackingURLs: PlaybackTrackingURLs? = nil
-        if let tracking = json["playbackTracking"] as? [String: Any],
-           let playbackURL = (tracking["videostatsPlaybackUrl"] as? [String: Any])?["baseUrl"] as? String,
-           let watchtimeURL = (tracking["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String {
-            trackingURLs = PlaybackTrackingURLs(videostatsPlaybackURL: playbackURL, videostatsWatchtimeURL: watchtimeURL)
-        }
-
-        // HLS
-        if let hlsString = streamingData?["hlsManifestUrl"] as? String,
-           let streamURL = URL(string: hlsString) {
-            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil, playbackTrackingURLs: trackingURLs)))
-            return
-        }
-
-        // combined formats
-        if let formats = streamingData?["formats"] as? [[String: Any]],
-           let best = formats.last, let urlStr = best["url"] as? String, let streamURL = URL(string: urlStr) {
-            resolve(with: .success(VideoInfo(streamURL: streamURL, audioOnlyURL: nil, title: title, thumbnailURL: thumbnailURL, channelId: channelId, channelName: channelName, channelAvatarURL: nil, playbackTrackingURLs: trackingURLs)))
-            return
-        }
-
-        resolve(with: .failure(YouTubeClientError.streamNotFound))
     }
 
     private func resolve(with result: Result<VideoInfo, Error>) {

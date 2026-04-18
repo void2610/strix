@@ -115,7 +115,7 @@ final class PlaybackTracker {
         guard let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
         request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
             forHTTPHeaderField: "User-Agent"
         )
         // Cookie 認証を付与

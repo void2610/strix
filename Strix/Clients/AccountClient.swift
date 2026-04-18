@@ -131,11 +131,11 @@ extension AccountClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
+        request.setValue("2.20250415.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
         request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
             forHTTPHeaderField: "User-Agent"
         )
 
@@ -145,7 +145,7 @@ extension AccountClient {
             "browseId": browseId,
             "context": ["client": [
                 "clientName": "WEB",
-                "clientVersion": "2.20241201.01.00",
+                "clientVersion": "2.20250415.01.00",
                 "hl": "ja",
                 "gl": "JP"
             ]]
@@ -315,11 +315,11 @@ extension AccountClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20241201.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
+        request.setValue("2.20250415.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
         request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
             forHTTPHeaderField: "User-Agent"
         )
 
@@ -328,7 +328,7 @@ extension AccountClient {
         let body: [String: Any] = [
             "context": ["client": [
                 "clientName": "WEB",
-                "clientVersion": "2.20241201.01.00",
+                "clientVersion": "2.20250415.01.00",
                 "hl": "ja",
                 "gl": "JP"
             ]]
