@@ -114,6 +114,7 @@ struct ChannelView: View {
     let channelId: String
 
     @State private var vm = ChannelViewModel()
+    @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
         Group {
@@ -214,7 +215,9 @@ struct ChannelView: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    NavigationLink(value: video.videoId) {
+                    Button {
+                        playerCoordinator.play(videoID: video.videoId)
+                    } label: {
                         VideoCardView(video: video, showChannelLink: false)
                     }
                     .buttonStyle(.plain)

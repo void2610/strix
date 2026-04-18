@@ -48,6 +48,7 @@ struct SearchView: View {
     @State private var query = ""
     @State private var path = NavigationPath()
     @Environment(\.modelContext) private var modelContext
+    @Environment(PlayerCoordinator.self) private var playerCoordinator
     @Query(sort: \SearchHistory.searchedAt, order: .reverse)
     private var searchHistory: [SearchHistory]
 
@@ -88,9 +89,6 @@ struct SearchView: View {
             }
             .onChange(of: query) { _, new in
                 if new.isEmpty { vm.reset() }
-            }
-            .navigationDestination(for: String.self) { videoID in
-                PlayerView(videoID: videoID)
             }
             .navigationDestination(for: ChannelDestination.self) { dest in
                 ChannelView(channelId: dest.channelId)
@@ -136,7 +134,7 @@ struct SearchView: View {
     private var resultsList: some View {
         List(vm.results) { video in
             Button {
-                path.append(video.videoId)
+                playerCoordinator.play(videoID: video.videoId)
             } label: {
                 VideoRowView(video: video)
                     .padding(.vertical, 4)

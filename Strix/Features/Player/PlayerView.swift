@@ -362,14 +362,10 @@ final class PlayerViewModel {
 
 struct PlayerView: View {
     let videoID: String
-    /// プレイリスト再生モード用の動画リスト
-    let playlistQueue: [VideoItem]
-    let initialIndex: Int
+    /// 外部から注入される PlayerViewModel（PlayerContainerView が所有）
+    var vm: PlayerViewModel
 
-    @State private var currentVideoID: String
-
-    @State private var vm = PlayerViewModel()
-    @State private var channelToOpen: String?
+    @Environment(PlayerCoordinator.self) private var coordinator
     @State private var showBotVerify = false
     @State private var showFullDescription = false
     @State private var showShareSheet = false
@@ -378,11 +374,9 @@ struct PlayerView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
 
-    init(videoID: String, playlistQueue: [VideoItem] = [], initialIndex: Int = 0) {
+    init(videoID: String, vm: PlayerViewModel) {
         self.videoID = videoID
-        self.playlistQueue = playlistQueue
-        self.initialIndex = initialIndex
-        self._currentVideoID = State(initialValue: videoID)
+        self.vm = vm
     }
 
     var body: some View {
@@ -475,49 +469,13 @@ struct PlayerView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: Binding(
-            get: { channelToOpen != nil },
-            set: { if !$0 { channelToOpen = nil } }
-        )) {
-            if let channelId = channelToOpen {
-                ChannelView(channelId: channelId)
-                    .navigationDestination(for: String.self) { videoID in
-                        PlayerView(videoID: videoID)
-                    }
-                    .navigationDestination(for: ChannelDestination.self) { dest in
-                        ChannelView(channelId: dest.channelId)
-                    }
-            }
-        }
-        .task(id: currentVideoID) {
-            guard vm.loadedVideoID != currentVideoID else { return }
-            // 初回のみプレイリストキューをセット
-            if vm.playlistQueue.isEmpty, !playlistQueue.isEmpty {
-                vm.playlistQueue = playlistQueue
-                vm.playlistIndex = initialIndex
-            }
-            showFullDescription = false
-            await vm.load(videoID: currentVideoID, modelContext: modelContext)
-        }
-        .onChange(of: vm.autoNextVideoID) { _, nextID in
-            guard let nextID else { return }
-            vm.autoNextVideoID = nil
-            currentVideoID = nextID
-        }
-        .onDisappear {
-            guard scenePhase == .active else { return }
-            vm.savePlaybackPosition(modelContext: modelContext)
-            vm.player?.pause()
-            NowPlayingManager.shared.stop()
-            LiveActivityManager.shared.stop()
-        }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
                 vm.savePlaybackPosition(modelContext: modelContext)
             }
         }
         .sheet(isPresented: $showShareSheet) {
-            if let url = URL(string: "https://youtu.be/\(currentVideoID)") {
+            if let url = URL(string: "https://youtu.be/\(videoID)") {
                 ShareSheet(items: [url])
             }
         }
@@ -526,7 +484,7 @@ struct PlayerView: View {
                 // 認証完了後にリトライ
                 showBotVerify = false
                 Task {
-                    await vm.load(videoID: currentVideoID, modelContext: modelContext)
+                    await vm.load(videoID: videoID, modelContext: modelContext)
                 }
             }
         }
@@ -686,9 +644,7 @@ struct PlayerView: View {
 
         return Group {
             if let channelId {
-                Button {
-                    channelToOpen = channelId
-                } label: {
+                NavigationLink(value: ChannelDestination(channelId: channelId)) {
                     content
                 }
                 .buttonStyle(.plain)
@@ -925,7 +881,9 @@ struct PlayerView: View {
 
                 LazyVStack(spacing: 0) {
                     ForEach(vm.relatedVideos) { video in
-                        NavigationLink(value: video.videoId) {
+                        Button {
+                            coordinator.play(videoID: video.videoId)
+                        } label: {
                             VideoRowView(video: video)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)

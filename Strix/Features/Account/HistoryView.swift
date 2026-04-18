@@ -32,6 +32,7 @@ final class HistoryViewModel {
 
 struct HistoryView: View {
     @State private var vm = HistoryViewModel()
+    @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
         Group {
@@ -52,8 +53,8 @@ struct HistoryView: View {
             } else {
                 List {
                     ForEach(vm.videos) { video in
-                        NavigationLink {
-                            PlayerView(videoID: video.videoId)
+                        Button {
+                            playerCoordinator.play(videoID: video.videoId)
                         } label: {
                             VideoRowView(video: video)
                         }

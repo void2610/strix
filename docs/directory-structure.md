@@ -21,7 +21,10 @@ strix/
 │   │   ├── Search/
 │   │   │   └── SearchView.swift     # 動画検索
 │   │   ├── Player/
-│   │   │   └── PlayerView.swift     # 動画再生（PiP・バックグラウンド・倍速・ループ・プレイリスト再生）
+│   │   │   ├── PlayerView.swift     # 動画再生（PiP・バックグラウンド・倍速・ループ・プレイリスト再生）
+│   │   │   ├── PlayerCoordinator.swift  # アプリ全体のプレイヤー状態管理
+│   │   │   ├── PlayerContainerView.swift # フルスクリーン/ミニプレイヤーのオーバーレイ管理
+│   │   │   └── MiniPlayerBar.swift  # ミニプレイヤー（右下の小窓映像ウィンドウ）
 │   │   ├── Channel/
 │   │   │   └── ChannelView.swift    # チャンネルページ（ホーム・動画・ライブ・再生リストタブ）
 │   │   ├── Account/

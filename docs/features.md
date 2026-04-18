@@ -6,6 +6,7 @@
 - **バックグラウンド再生**: `AVAudioSession(.playback)` + `UIBackgroundModes: audio`
 - **PiP（ピクチャ・イン・ピクチャ）**: AVPlayerViewController subclass で実装
 - **音声専用モード**: IOS クライアントの `adaptiveFormats` から音声ストリームのみ取得
+- **ミニプレイヤー**: 動画部分を下スワイプで画面右下の小窓に最小化。映像がリアルタイムで流れ続け、タップでフルスクリーン復帰。ドラッグで画面内を自由に移動可能
 
 ## 検索・ブラウジング
 

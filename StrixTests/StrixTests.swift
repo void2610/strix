@@ -1761,6 +1761,60 @@ struct PlaylistDetailViewModelRemoveTests {
     }
 }
 
+// MARK: - PlayerCoordinator ユニットテスト
+
+@MainActor
+struct PlayerCoordinatorTests {
+
+    @Test func playSetsFullScreenMode() {
+        let coordinator = PlayerCoordinator()
+        #expect(coordinator.mode == .hidden)
+
+        coordinator.play(videoID: "abc")
+
+        #expect(coordinator.mode == .fullScreen)
+        #expect(coordinator.currentVideoID == "abc")
+    }
+
+    @Test func playWithPlaylistSetsQueue() {
+        let coordinator = PlayerCoordinator()
+        let queue = [VideoItem(videoId: "v1", title: "A"), VideoItem(videoId: "v2", title: "B")]
+
+        coordinator.play(videoID: "v1", playlistQueue: queue, initialIndex: 0)
+
+        #expect(coordinator.playlistQueue.count == 2)
+        #expect(coordinator.initialIndex == 0)
+    }
+
+    @Test func minimizeSetsMode() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(videoID: "abc")
+        coordinator.minimize()
+
+        #expect(coordinator.mode == .miniPlayer)
+        #expect(coordinator.currentVideoID == "abc")
+    }
+
+    @Test func expandRestoresFullScreen() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(videoID: "abc")
+        coordinator.minimize()
+        coordinator.expand()
+
+        #expect(coordinator.mode == .fullScreen)
+    }
+
+    @Test func dismissClearsState() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(videoID: "abc", playlistQueue: [VideoItem(videoId: "v1", title: "A")])
+        coordinator.dismiss()
+
+        #expect(coordinator.mode == .hidden)
+        #expect(coordinator.currentVideoID == nil)
+        #expect(coordinator.playlistQueue.isEmpty)
+    }
+}
+
 // MARK: - PlayerViewModel コメント ユニットテスト
 
 @MainActor

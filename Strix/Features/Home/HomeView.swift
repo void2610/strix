@@ -131,6 +131,7 @@ struct HomeView: View {
     @State private var path = NavigationPath()
     @State private var showPlaylistEdit = false
     @Environment(\.modelContext) private var modelContext
+    @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -173,9 +174,6 @@ struct HomeView: View {
                 HomePlaylistEditView(allPlaylists: vm.allPlaylists) {
                     vm.refilterPlaylists(modelContext: modelContext)
                 }
-            }
-            .navigationDestination(for: String.self) { videoID in
-                PlayerView(videoID: videoID)
             }
             .navigationDestination(for: ChannelDestination.self) { dest in
                 ChannelView(channelId: dest.channelId)
@@ -236,7 +234,7 @@ struct HomeView: View {
                         .buttonStyle(.plain)
                     } else {
                         Button {
-                            path.append(video.videoId)
+                            playerCoordinator.play(videoID: video.videoId)
                         } label: {
                             VideoCardView(video: video)
                         }

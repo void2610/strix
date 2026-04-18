@@ -87,9 +87,6 @@ struct AccountView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("アカウント")
         .navigationBarTitleDisplayMode(.large)
-        .navigationDestination(for: String.self) { videoID in
-            PlayerView(videoID: videoID)
-        }
         .navigationDestination(for: ChannelDestination.self) { dest in
             ChannelView(channelId: dest.channelId)
         }

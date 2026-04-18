@@ -52,6 +52,7 @@ struct PlaylistDetailView: View {
     let playlist: YTPlaylist
 
     @State private var vm = PlaylistDetailViewModel()
+    @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
         Group {
@@ -73,8 +74,8 @@ struct PlaylistDetailView: View {
                 List {
                     // 全曲再生ボタン
                     if let first = vm.videos.first {
-                        NavigationLink {
-                            PlayerView(
+                        Button {
+                            playerCoordinator.play(
                                 videoID: first.videoId,
                                 playlistQueue: vm.videos,
                                 initialIndex: 0
@@ -85,8 +86,8 @@ struct PlaylistDetailView: View {
                     }
 
                     ForEach(Array(vm.videos.enumerated()), id: \.element.id) { index, video in
-                        NavigationLink {
-                            PlayerView(
+                        Button {
+                            playerCoordinator.play(
                                 videoID: video.videoId,
                                 playlistQueue: vm.videos,
                                 initialIndex: index

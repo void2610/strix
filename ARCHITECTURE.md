@@ -58,7 +58,10 @@ Strix/
 │   ├── Search/
 │   │   └── SearchView.swift          # キーワード検索・結果表示
 │   ├── Player/
-│   │   └── PlayerView.swift          # 動画再生・関連動画・速度切り替え
+│   │   ├── PlayerView.swift          # 動画再生・関連動画・速度切り替え
+│   │   ├── PlayerCoordinator.swift   # アプリ全体のプレイヤー状態管理（@Observable）
+│   │   ├── PlayerContainerView.swift # フルスクリーン/ミニプレイヤーのオーバーレイ管理
+│   │   └── MiniPlayerBar.swift       # ミニプレイヤー（AVPlayerLayer 小窓映像）
 │   ├── Auth/
 │   │   ├── AccountView.swift         # アカウント情報・ライブラリ・プレイリスト
 │   │   ├── LoginView.swift           # Google/YouTube ログイン（WKWebView）
