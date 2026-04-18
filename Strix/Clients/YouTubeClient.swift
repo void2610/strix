@@ -212,25 +212,32 @@ extension YouTubeClient {
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
-        // googlevideo.com への fetch/XHR をインターセプトするスクリプト
+        // googlevideo.com への fetch/XHR をインターセプトするスクリプト（重複排除付き）
         let interceptScript = WKUserScript(source: """
         (function() {
             window.__strix_streams = [];
+            window.__strix_seen = {};
+            function addStream(url) {
+                if (!url || typeof url !== 'string') return;
+                if (!url.includes('googlevideo.com/videoplayback')) return;
+                // itag で重複排除
+                var m = url.match(/[&?]itag=(\\d+)/);
+                var key = m ? m[1] : url.substring(0, 100);
+                if (!window.__strix_seen[key]) {
+                    window.__strix_seen[key] = true;
+                    window.__strix_streams.push(url);
+                }
+            }
             var origFetch = window.fetch;
             window.fetch = function() {
                 var url = arguments[0];
-                if (typeof url === 'string' && url.includes('googlevideo.com/videoplayback')) {
-                    window.__strix_streams.push(url);
-                } else if (url && url.url && url.url.includes('googlevideo.com/videoplayback')) {
-                    window.__strix_streams.push(url.url);
-                }
+                if (typeof url === 'string') addStream(url);
+                else if (url && url.url) addStream(url.url);
                 return origFetch.apply(this, arguments);
             };
             var origXHR = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function() {
-                if (arguments[1] && typeof arguments[1] === 'string' && arguments[1].includes('googlevideo.com/videoplayback')) {
-                    window.__strix_streams.push(arguments[1]);
-                }
+                if (arguments[1]) addStream(arguments[1]);
                 return origXHR.apply(this, arguments);
             };
         })();
@@ -437,12 +444,27 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                 let title = info["title"] as? String ?? self.videoID
                 let thumbnail = info["thumbnail"] as? String ?? ""
 
-                // video/mp4 の URL を優先、なければ最初の URL
-                let videoURL = streams.first(where: { $0.contains("mime=video") }) ?? streams.first!
-                strixLog("player[WebPage] ストリーム取得成功 (attempt \(attempt), \(streams.count)本)")
+                // itag を URL から抽出するヘルパー
+                func itag(of url: String) -> String? {
+                    URLComponents(string: url)?.queryItems?.first(where: { $0.name == "itag" })?.value
+                }
 
-                if let streamURL = URL(string: videoURL) {
-                    // 音声 URL も探す
+                let allItags = streams.compactMap { itag(of: $0) }
+                strixLog("player[WebPage] poll \(attempt): \(streams.count)本 itags=\(allItags)")
+
+                // combined format（映像+音声一体）を優先: itag=18(360p), 22(720p)
+                let combinedItags = ["22", "18"]
+                var selectedURL: String?
+                for tag in combinedItags {
+                    if let url = streams.first(where: { itag(of: $0) == tag }) {
+                        selectedURL = url
+                        break
+                    }
+                }
+
+                // combined が見つかったら即座に返す
+                if let urlStr = selectedURL, let streamURL = URL(string: urlStr) {
+                    strixLog("player[WebPage] combined 取得成功 itag=\(itag(of: urlStr) ?? "?")")
                     let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
                     let audioURL = audioURLStr.flatMap { URL(string: $0) }
                     self.resolve(with: .success(VideoInfo(
@@ -453,6 +475,22 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                     )))
                     return
                 }
+
+                // combined がない場合: まだ読み込み中かもしれないので少し待つ
+                // ただし最後の数回なら adaptive でフォールバック
+                if attempt >= maxAttempts - 2, let firstURL = streams.first, let streamURL = URL(string: firstURL) {
+                    strixLog("player[WebPage] combined なし、フォールバック itag=\(itag(of: firstURL) ?? "?")")
+                    let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
+                    let audioURL = audioURLStr.flatMap { URL(string: $0) }
+                    self.resolve(with: .success(VideoInfo(
+                        streamURL: streamURL, audioOnlyURL: audioURL,
+                        title: title, thumbnailURL: thumbnail,
+                        channelId: nil, channelName: nil,
+                        channelAvatarURL: nil, playbackTrackingURLs: nil
+                    )))
+                    return
+                }
+                // combined が見つかるまでもう少し待つ
             }
 
             let count = (try? JSONSerialization.jsonObject(
