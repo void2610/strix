@@ -24,6 +24,10 @@ final class PlayerCoordinator {
     var initialIndex: Int = 0
     /// フルスクリーン時の下方向ドラッグオフセット（PlayerView の playerSection から更新）
     var dragOffset: CGFloat = 0
+    /// 現在選択中のタブインデックス（RootTabView からバインド）
+    var selectedTab: Int = 0
+    /// プレイヤーからチャンネルページへ遷移する際の保留先
+    var pendingChannelNavigation: ChannelDestination?
 
     /// 任意のビューから動画再生を開始する
     func play(videoID: String, playlistQueue: [VideoItem] = [], initialIndex: Int = 0) {
@@ -36,6 +40,12 @@ final class PlayerCoordinator {
     /// フルスクリーンからミニプレイヤーに最小化する
     func minimize() {
         mode = .miniPlayer
+    }
+
+    /// プレイヤーを最小化してチャンネルページへ遷移する
+    func navigateToChannel(_ destination: ChannelDestination) {
+        pendingChannelNavigation = destination
+        minimize()
     }
 
     /// ミニプレイヤーからフルスクリーンに展開する

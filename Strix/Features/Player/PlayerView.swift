@@ -680,7 +680,9 @@ struct PlayerView: View {
 
         return Group {
             if let channelId {
-                NavigationLink(value: ChannelDestination(channelId: channelId)) {
+                Button {
+                    coordinator.navigateToChannel(ChannelDestination(channelId: channelId))
+                } label: {
                     content
                 }
                 .buttonStyle(.plain)

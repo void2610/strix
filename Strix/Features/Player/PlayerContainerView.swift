@@ -71,9 +71,6 @@ struct PlayerContainerView: View {
             VStack(spacing: 0) {
                 NavigationStack {
                     PlayerView(videoID: coordinator.currentVideoID ?? "", vm: vm)
-                        .navigationDestination(for: ChannelDestination.self) { dest in
-                            ChannelView(channelId: dest.channelId)
-                        }
                 }
             }
         }

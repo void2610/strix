@@ -94,6 +94,11 @@ struct SearchView: View {
                 ChannelView(channelId: dest.channelId)
             }
         }
+        .onChange(of: playerCoordinator.pendingChannelNavigation) { _, dest in
+            guard let dest, playerCoordinator.selectedTab == 1 else { return }
+            playerCoordinator.pendingChannelNavigation = nil
+            path.append(dest)
+        }
     }
 
     // MARK: - 検索履歴リスト

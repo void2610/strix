@@ -9,17 +9,18 @@ import SwiftUI
 
 struct RootTabView: View {
     @State private var playerCoordinator = PlayerCoordinator()
+    @State private var selectedTab = 0
 
     var body: some View {
         ZStack {
-            TabView {
-                Tab("ホーム", systemImage: "house.fill") {
+            TabView(selection: $selectedTab) {
+                Tab("ホーム", systemImage: "house.fill", value: 0) {
                     HomeView()
                 }
-                Tab("検索", systemImage: "magnifyingglass") {
+                Tab("検索", systemImage: "magnifyingglass", value: 1) {
                     SearchView()
                 }
-                Tab("アカウント", systemImage: "person.crop.circle") {
+                Tab("アカウント", systemImage: "person.crop.circle", value: 2) {
                     AccountView()
                 }
             }
@@ -29,5 +30,8 @@ struct RootTabView: View {
             }
         }
         .environment(playerCoordinator)
+        .onChange(of: selectedTab) { _, newTab in
+            playerCoordinator.selectedTab = newTab
+        }
     }
 }

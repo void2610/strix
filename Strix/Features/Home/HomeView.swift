@@ -175,6 +175,11 @@ struct HomeView: View {
                 ChannelView(channelId: dest.channelId)
             }
         }
+        .onChange(of: playerCoordinator.pendingChannelNavigation) { _, dest in
+            guard let dest, playerCoordinator.selectedTab == 0 else { return }
+            playerCoordinator.pendingChannelNavigation = nil
+            path.append(dest)
+        }
         .task(id: AuthState.shared.isSignedIn) {
             await vm.reload(modelContext: modelContext)
         }

@@ -63,15 +63,22 @@ struct AccountView: View {
     @State private var vm = AccountViewModel()
     @State private var showLogin = false
     @State private var showLog = false
+    @State private var path = NavigationPath()
+    @Environment(PlayerCoordinator.self) private var playerCoordinator
     private let authState = AuthState.shared
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             if authState.isSignedIn {
                 signedInView
             } else {
                 signedOutView
             }
+        }
+        .onChange(of: playerCoordinator.pendingChannelNavigation) { _, dest in
+            guard let dest, playerCoordinator.selectedTab == 2 else { return }
+            playerCoordinator.pendingChannelNavigation = nil
+            path.append(dest)
         }
     }
 
