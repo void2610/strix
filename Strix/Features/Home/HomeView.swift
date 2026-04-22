@@ -92,6 +92,7 @@ final class HomeViewModel {
     }
 
     private func loadFeed(generation: Int) async {
+        guard !UserDefaults.standard.bool(forKey: "disableRecommendations") else { return }
         strixLog("loadFeed 開始 gen=\(generation) current=\(loadGeneration)")
         do {
             let (result, token) = try await client.fetchHome()
@@ -126,6 +127,7 @@ struct HomeView: View {
     @State private var vm = HomeViewModel()
     @State private var path = NavigationPath()
     @State private var showPlaylistEdit = false
+    @AppStorage("disableRecommendations") private var disableRecommendations = false
     @Environment(\.modelContext) private var modelContext
     @Environment(PlayerCoordinator.self) private var playerCoordinator
 
@@ -141,7 +143,14 @@ struct HomeView: View {
                     Divider()
 
                     // ホームフィード
-                    if vm.isLoading {
+                    if disableRecommendations {
+                        ContentUnavailableView(
+                            "ホームフィードはオフです",
+                            systemImage: "eye.slash",
+                            description: Text("おすすめ動画の表示は設定で無効にされています")
+                        )
+                        .padding(.top, 40)
+                    } else if vm.isLoading {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)

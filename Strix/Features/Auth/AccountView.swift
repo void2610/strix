@@ -103,6 +103,7 @@ struct AccountView: View {
             accountHeaderSection
             librarySection
             playlistSection
+            settingsSection
             signOutSection
         }
         .listStyle(.insetGrouped)
@@ -241,6 +242,18 @@ struct AccountView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - 設定
+
+    @AppStorage("disableRecommendations") private var disableRecommendations = false
+
+    private var settingsSection: some View {
+        Section("設定") {
+            Toggle(isOn: $disableRecommendations) {
+                Label("おすすめを無効化", systemImage: "eye.slash")
             }
         }
     }

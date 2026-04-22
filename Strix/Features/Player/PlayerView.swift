@@ -283,6 +283,7 @@ final class PlayerViewModel {
     /// 再生終了時の処理（通知 + 定期監視の両方から呼ばれるため二重発火を防止）
     private func handlePlaybackEnded() {
         guard autoNextVideoID == nil else { return }
+        let hideRelated = UserDefaults.standard.bool(forKey: "disableRecommendations")
         if isLooping {
             player?.seek(to: .zero)
             player?.play()
@@ -292,11 +293,11 @@ final class PlayerViewModel {
             if nextIndex < playlistQueue.count {
                 playlistIndex = nextIndex
                 autoNextVideoID = playlistQueue[nextIndex].videoId
-            } else if autoPlayNext, let next = relatedVideos.first {
-                // プレイリスト末尾 → 関連動画にフォールバック
+            } else if autoPlayNext, !hideRelated, let next = relatedVideos.first {
+                // プレイリスト末尾 → 関連動画にフォールバック（関連動画が有効な場合のみ）
                 autoNextVideoID = next.videoId
             }
-        } else if autoPlayNext, let next = relatedVideos.first {
+        } else if autoPlayNext, !hideRelated, let next = relatedVideos.first {
             autoNextVideoID = next.videoId
         }
     }
@@ -384,6 +385,7 @@ struct PlayerView: View {
     var vm: PlayerViewModel
 
     @Environment(PlayerCoordinator.self) private var coordinator
+    @AppStorage("disableRecommendations") private var disableRecommendations = false
     @State private var showBotVerify = false
     @State private var showFullDescription = false
     @State private var showComments = false
@@ -440,7 +442,16 @@ struct PlayerView: View {
                     .padding(.top, 8)
 
                 // 関連動画
-                relatedSection
+                if disableRecommendations {
+                    ContentUnavailableView(
+                        "関連動画はオフです",
+                        systemImage: "eye.slash",
+                        description: Text("おすすめ動画の表示は設定で無効にされています")
+                    )
+                    .padding(.top, 12)
+                } else {
+                    relatedSection
+                }
             }
             }
             } // if !isFullScreen
