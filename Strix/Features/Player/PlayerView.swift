@@ -233,6 +233,24 @@ final class PlayerViewModel {
         player?.rate = playbackRate
     }
 
+    /// 任意の再生速度を適用する（倍速メニュー用）
+    func setPlaybackRate(_ rate: Float) {
+        playbackRate = rate
+        // 再生中のみ rate を即適用（停止中に rate を変えると勝手に再生開始するため）
+        if player?.rate ?? 0 > 0 {
+            player?.rate = rate
+        }
+    }
+
+    /// 現在位置から指定秒数だけ進める（正で前進、負で後退）
+    func skip(by seconds: Double) {
+        guard let player, let item = player.currentItem else { return }
+        let now = player.currentTime().seconds
+        let maxTime: Double = item.duration.isNumeric ? item.duration.seconds : .infinity
+        let target = max(0, min(now + seconds, maxTime))
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+    }
+
     /// ループ再生のオン/オフを切り替える
     func toggleLoop() {
         isLooping.toggle()
@@ -368,7 +386,6 @@ struct PlayerView: View {
     @Environment(PlayerCoordinator.self) private var coordinator
     @State private var showBotVerify = false
     @State private var showFullDescription = false
-    @State private var showShareSheet = false
     @State private var showComments = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -382,68 +399,24 @@ struct PlayerView: View {
     var body: some View {
         VStack(spacing: 0) {
             // 動画プレイヤー（画面上部に固定、スクロールしない）
+            // フルスクリーン時は画面全体に広げる
             playerSection
+                .frame(maxWidth: .infinity, maxHeight: isFullScreen ? .infinity : nil)
 
-            // 下部コンテンツ（動画の後ろをスクロール）
+            // 下部コンテンツ（動画の後ろをスクロール）。フルスクリーン中は非表示
+            if !isFullScreen {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                // コントロールボタン（ループ・自動再生・倍速）
-                if !vm.isLoadingStream && vm.streamError == nil {
-                    HStack(spacing: 8) {
-                        // ループ切り替え
-                        playerControlButton(
-                            icon: vm.isLooping ? "repeat.1" : "repeat",
-                            isActive: vm.isLooping
-                        ) { vm.toggleLoop() }
-
-                        // 次動画自動再生切り替え
-                        playerControlButton(
-                            icon: "forward.end.fill",
-                            isActive: vm.autoPlayNext
-                        ) { vm.toggleAutoPlayNext() }
-
-                        // プレイリスト再生時: 前/次トラック
-                        if !vm.playlistQueue.isEmpty {
-                            playerControlButton(
-                                icon: "backward.fill",
-                                isActive: vm.playlistIndex > 0
-                            ) { vm.playPrevious() }
-
-                            Text("\(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            playerControlButton(
-                                icon: "forward.fill",
-                                isActive: vm.playlistIndex + 1 < vm.playlistQueue.count
-                            ) { vm.playNext() }
-                        }
-
+                // プレイリスト再生インジケータ（N/M 表示。前/次ボタンはプレイヤー内へ移行済み）
+                if !vm.playlistQueue.isEmpty, !vm.isLoadingStream, vm.streamError == nil {
+                    HStack {
+                        Image(systemName: "list.and.film")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("プレイリスト再生中  \(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         Spacer()
-
-                        // 音声のみ切り替え
-                        playerControlButton(
-                            icon: vm.isAudioOnly ? "speaker.wave.2.fill" : "video.fill",
-                            isActive: vm.isAudioOnly
-                        ) { vm.toggleAudioOnly() }
-
-                        // 倍速切り替え
-                        Button { vm.togglePlaybackRate() } label: {
-                            Text(vm.playbackRate == 1.0 ? "1×" : "2×")
-                                .font(.caption.bold())
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.thinMaterial, in: Capsule())
-                        }
-
-                        // 共有
-                        Button { showShareSheet = true } label: {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.caption.bold())
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.thinMaterial, in: Capsule())
-                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -470,16 +443,12 @@ struct PlayerView: View {
                 relatedSection
             }
             }
+            } // if !isFullScreen
         }
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
                 vm.savePlaybackPosition(modelContext: modelContext)
-            }
-        }
-        .sheet(isPresented: $showShareSheet) {
-            if let url = URL(string: "https://youtu.be/\(videoID)") {
-                ShareSheet(items: [url])
             }
         }
         .sheet(isPresented: $showBotVerify) {
@@ -493,19 +462,21 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - コントロールボタン
+    // MARK: - フルスクリーン切替
 
-    private func playerControlButton(icon: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.caption.bold())
-                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.thinMaterial, in: Capsule())
+    /// プレイヤー内の ⛶ ボタンから呼ばれる。
+    /// `coordinator.isFullScreen` を toggle し、PlayerContainerView / RootTabView 側で
+    /// タブバー非表示・レイアウト切替を行う（Phase 2 の現段階では Coordinator に状態を持たせるのみ）。
+    private func toggleFullScreen() {
+        coordinator.isFullScreen.toggle()
+        // iOS 16+ の UIWindowScene.requestGeometryUpdate で向きを強制する
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+            let orientations: UIInterfaceOrientationMask = coordinator.isFullScreen ? .landscape : .portrait
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { _ in }
         }
-        .buttonStyle(.plain)
     }
+
+    private var isFullScreen: Bool { coordinator.isFullScreen }
 
     // MARK: - プレイヤー
 
@@ -539,9 +510,14 @@ struct PlayerView: View {
                         }
                         .colorScheme(.dark)
                     }
-            } else if let player = vm.player {
-                CustomPlayerView(player: player)
-                    .aspectRatio(16 / 9, contentMode: .fit)
+            } else if vm.player != nil {
+                CustomPlayerView(
+                    videoID: videoID,
+                    vm: vm,
+                    onToggleFullScreen: { toggleFullScreen() },
+                    isFullScreen: isFullScreen
+                )
+                .aspectRatio(16 / 9, contentMode: .fit)
             }
         }
         .gesture(

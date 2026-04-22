@@ -66,10 +66,10 @@ struct PlayerContainerView: View {
 
     @ViewBuilder
     private func fullScreenPlayer(geo: GeometryProxy) -> some View {
-        let screenHeight = geo.size.height
-
         ZStack(alignment: .top) {
-            Color(.systemBackground).ignoresSafeArea()
+            // フルスクリーン時は黒背景、通常時はシステム背景
+            (coordinator.isFullScreen ? Color.black : Color(.systemBackground))
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 NavigationStack {

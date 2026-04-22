@@ -24,12 +24,15 @@ struct RootTabView: View {
                     AccountView()
                 }
             }
+            // フルスクリーン時はタブバーを隠して画面全体を黒背景にする
+            .toolbarVisibility(playerCoordinator.isFullScreen ? .hidden : .visible, for: .tabBar)
 
             if playerCoordinator.mode != .hidden {
                 PlayerContainerView()
             }
         }
         .environment(playerCoordinator)
+        .statusBarHidden(playerCoordinator.isFullScreen)
         .onChange(of: selectedTab) { _, newTab in
             playerCoordinator.selectedTab = newTab
         }

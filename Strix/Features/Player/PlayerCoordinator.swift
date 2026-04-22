@@ -28,6 +28,8 @@ final class PlayerCoordinator {
     var selectedTab: Int = 0
     /// プレイヤーからチャンネルページへ遷移する際の保留先
     var pendingChannelNavigation: ChannelDestination?
+    /// フルスクリーン表示中（横回転）
+    var isFullScreen: Bool = false
 
     /// 任意のビューから動画再生を開始する
     func play(videoID: String, playlistQueue: [VideoItem] = [], initialIndex: Int = 0) {
@@ -59,5 +61,6 @@ final class PlayerCoordinator {
         currentVideoID = nil
         playlistQueue = []
         initialIndex = 0
+        isFullScreen = false
     }
 }
