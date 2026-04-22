@@ -1083,6 +1083,33 @@ extension ContentClient {
         _ = response
     }
 
+    /// プレイリストそのものを削除（自身のプレイリストをライブラリから取り除く）
+    static func deletePlaylist(playlistId: String) async throws {
+        // VLプレフィックスを除去してAPIに渡す
+        let rawId = playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId
+        let url = URL(string: "https://www.youtube.com/youtubei/v1/playlist/delete?prettyPrint=false")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        applyAuth(to: &request)
+
+        let body: [String: Any] = [
+            "playlistId": rawId,
+            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.httpShouldSetCookies = false
+        sessionConfig.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: sessionConfig)
+        let (_, response) = try await session.data(for: request)
+        _ = response
+    }
+
     /// プレイリストから動画を削除する
     static func removeFromPlaylist(playlistId: String, videoId: String, setVideoId: String) async throws {
         let url = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!

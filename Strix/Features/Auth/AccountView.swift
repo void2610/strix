@@ -54,6 +54,19 @@ final class AccountViewModel {
         likes = library.likes
         playlists = library.playlists
     }
+
+    /// プレイリストを自分のライブラリから削除する（楽観的 UI 更新）。
+    /// 失敗時はサーバ側と乖離しないようリロードする。
+    func deletePlaylist(_ playlist: YTPlaylist) async {
+        let id = playlist.playlistId
+        playlists.removeAll { $0.playlistId == id }
+        do {
+            try await ContentClient.deletePlaylist(playlistId: id)
+        } catch {
+            strixLog("プレイリスト削除エラー: \(error)")
+            await reload()
+        }
+    }
 }
 
 // MARK: - View
@@ -64,6 +77,7 @@ struct AccountView: View {
     @State private var showLogin = false
     @State private var showLog = false
     @State private var path = NavigationPath()
+    @State private var pendingDeletion: YTPlaylist?
     @Environment(PlayerCoordinator.self) private var playerCoordinator
     private let authState = AuthState.shared
 
@@ -99,6 +113,22 @@ struct AccountView: View {
         }
         .refreshable { await vm.reload() }
         .sheet(isPresented: $showLog) { LogView() }
+        .alert(
+            "プレイリストを削除",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            presenting: pendingDeletion
+        ) { playlist in
+            Button("削除", role: .destructive) {
+                Task { await vm.deletePlaylist(playlist) }
+                pendingDeletion = nil
+            }
+            Button("キャンセル", role: .cancel) { pendingDeletion = nil }
+        } message: { playlist in
+            Text("「\(playlist.title ?? "プレイリスト")」を削除しますか？\nこの操作は取り消せません。")
+        }
         .task { await vm.load() }
     }
 
@@ -202,6 +232,13 @@ struct AccountView: View {
                         PlaylistDetailView(playlist: playlist)
                     } label: {
                         playlistRow(playlist: playlist)
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            pendingDeletion = playlist
+                        } label: {
+                            Label("リストから削除", systemImage: "trash")
+                        }
                     }
                 }
             }
