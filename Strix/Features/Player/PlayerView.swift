@@ -928,27 +928,7 @@ struct PlayerView: View {
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
-                            Button {
-                                UIPasteboard.general.url = URL(string: "https://youtu.be/\(video.videoId)")
-                            } label: {
-                                Label("リンクをコピー", systemImage: "doc.on.doc")
-                            }
-
-                            if let url = URL(string: "https://youtu.be/\(video.videoId)") {
-                                ShareLink(item: url) {
-                                    Label("共有", systemImage: "square.and.arrow.up")
-                                }
-                            }
-
-                            Divider()
-
-                            Button {
-                                Task { try? await ContentClient.addToWatchLater(videoId: video.videoId) }
-                            } label: {
-                                Label("後で見る", systemImage: "clock")
-                            }
-
-                            AddToPlaylistMenu(videoId: video.videoId)
+                            VideoContextMenu(video: video)
                         }
 
                         Divider()
@@ -980,9 +960,9 @@ private struct AVPlayerLayerView: UIViewControllerRepresentable {
 }
 
 /// `AVPlayerViewController` のサブクラス。
-/// `willResignActive` で `player = nil` にしてバックグラウンド自動停止を無効化し、
-/// `willEnterForeground` で `player` を復元する。
-/// PiP 中は `player = nil` をスキップして PiP を維持する。
+/// `didEnterBackground` で `player` を一時的に切り離して iOS の自動停止を回避しつつ、
+/// バックグラウンド中も再生を継続させるため、直後に `playerRef.play()` で再開する。
+/// PiP 中はこの処理をスキップする。
 final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControllerDelegate {
     /// アプリ内で同時に存在できる VC は1つだけ。新しい VC が init されたとき
     /// 古い VC が PiP 中であれば stopPictureInPicture() で閉じる。
@@ -991,6 +971,8 @@ final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControlle
     private let playerRef: AVPlayer
     /// PiP がアクティブかどうかをデリゲートで追跡する
     private var isPiPActive = false
+    /// バックグラウンド移行前に再生中だったか（復帰時の play 再開判定用）
+    private var wasPlayingBeforeBackground = false
 
     init(player: AVPlayer) {
         self.playerRef = player
@@ -1018,8 +1000,8 @@ final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControlle
         super.viewDidLoad()
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(willResignActive),
-            name: UIApplication.willResignActiveNotification,
+            selector: #selector(didEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -1032,16 +1014,27 @@ final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControlle
 
     deinit { NotificationCenter.default.removeObserver(self) }
 
-    /// バックグラウンド移行直前: ViewController とプレイヤーの接続を切り離して iOS の自動停止を無効化する。
+    /// バックグラウンド移行時: AVPlayerViewController から AVPlayer を切り離し、
+    /// iOS による自動停止を回避する。切り離す際に内部で pause() される可能性があるため、
+    /// 直後に playerRef.play() を呼んで音声再生を継続させる。
     /// PiP 中は切り離すと PiP が終了するためスキップする。
-    @objc private func willResignActive() {
+    @objc private func didEnterBackground() {
         guard !isPiPActive else { return }
+        wasPlayingBeforeBackground = playerRef.rate > 0
         player = nil
+        if wasPlayingBeforeBackground {
+            playerRef.play()
+        }
     }
 
     /// フォアグラウンド復帰直前: ViewController にプレイヤーを再接続して映像表示を再開する
     @objc private func willEnterForeground() {
         player = playerRef
+        // player 再接続時にも内部で pause() される場合があるため、元の再生状態を復元する
+        if wasPlayingBeforeBackground {
+            playerRef.play()
+        }
+        wasPlayingBeforeBackground = false
     }
 
     // MARK: - AVPlayerViewControllerDelegate
