@@ -86,29 +86,27 @@ struct PlaylistDetailView: View {
                     }
 
                     ForEach(Array(vm.videos.enumerated()), id: \.element.id) { index, video in
-                        Button {
-                            playerCoordinator.play(
-                                videoID: video.videoId,
-                                playlistQueue: vm.videos,
-                                initialIndex: index
-                            )
-                        } label: {
-                            VideoRowView(video: video)
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            if video.setVideoId != nil {
-                                Button(role: .destructive) {
-                                    Task {
-                                        await vm.remove(video: video, from: playlist.playlistId)
-                                    }
-                                } label: {
-                                    Label("プレイリストから削除", systemImage: "trash")
-                                }
+                        // List 内で Button + .contextMenu だと長押しが Button に吸われて効かないため、
+                        // contentShape + onTapGesture でタップ領域を確保する
+                        VideoRowView(video: video)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                playerCoordinator.play(
+                                    videoID: video.videoId,
+                                    playlistQueue: vm.videos,
+                                    initialIndex: index
+                                )
                             }
-
-                            AddToPlaylistMenu(videoId: video.videoId)
-                        }
+                            .contextMenu {
+                                VideoContextMenu(
+                                    video: video,
+                                    onRemoveFromPlaylist: {
+                                        Task {
+                                            await vm.remove(video: video, from: playlist.playlistId)
+                                        }
+                                    }
+                                )
+                            }
                     }
                 }
                 .listStyle(.plain)

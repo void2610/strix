@@ -243,40 +243,14 @@ struct HomeView: View {
                     }
                 }
                 .contextMenu {
-                    if !video.feedbackTokens.isEmpty {
-                        Button(role: .destructive) {
-                            Task {
-                                try? await ContentClient.sendFeedback(tokens: video.feedbackTokens)
-                            }
+                    VideoContextMenu(
+                        video: video,
+                        onDismiss: {
                             withAnimation {
                                 vm.videos.removeAll { $0.videoId == video.videoId }
                             }
-                        } label: {
-                            Label("興味なし", systemImage: "hand.thumbsdown")
                         }
-                    }
-
-                    Button {
-                        UIPasteboard.general.url = URL(string: "https://youtu.be/\(video.videoId)")
-                    } label: {
-                        Label("リンクをコピー", systemImage: "doc.on.doc")
-                    }
-
-                    if let url = URL(string: "https://youtu.be/\(video.videoId)") {
-                        ShareLink(item: url) {
-                            Label("共有", systemImage: "square.and.arrow.up")
-                        }
-                    }
-
-                    Divider()
-
-                    Button {
-                        Task { try? await ContentClient.addToWatchLater(videoId: video.videoId) }
-                    } label: {
-                        Label("後で見る", systemImage: "clock")
-                    }
-
-                    AddToPlaylistMenu(videoId: video.videoId)
+                    )
                 }
 
                 Divider()

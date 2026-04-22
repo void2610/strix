@@ -53,12 +53,16 @@ struct HistoryView: View {
             } else {
                 List {
                     ForEach(vm.videos) { video in
-                        Button {
-                            playerCoordinator.play(videoID: video.videoId)
-                        } label: {
-                            VideoRowView(video: video)
-                        }
-                        .buttonStyle(.plain)
+                        // List 内で Button + .contextMenu だと長押しが Button に吸われて効かないため、
+                        // contentShape + onTapGesture でタップ領域を確保する
+                        VideoRowView(video: video)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                playerCoordinator.play(videoID: video.videoId)
+                            }
+                            .contextMenu {
+                                VideoContextMenu(video: video)
+                            }
                     }
                 }
                 .listStyle(.plain)

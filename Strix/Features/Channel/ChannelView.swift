@@ -204,23 +204,41 @@ struct ChannelView: View {
             .padding(.top, 40)
         } else {
             ForEach(vm.currentVideos) { video in
-                if let playlistId = video.playlistId {
-                    // プレイリストはプレイリスト詳細へ
-                    NavigationLink {
-                        PlaylistDetailView(
-                            playlist: YTPlaylist(playlistId: playlistId, title: video.title)
-                        )
-                    } label: {
-                        VideoCardView(video: video, showChannelLink: false)
+                Group {
+                    if let playlistId = video.playlistId {
+                        // プレイリストはプレイリスト詳細へ
+                        NavigationLink {
+                            PlaylistDetailView(
+                                playlist: YTPlaylist(playlistId: playlistId, title: video.title)
+                            )
+                        } label: {
+                            VideoCardView(video: video, showChannelLink: false)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            playerCoordinator.play(videoID: video.videoId)
+                        } label: {
+                            VideoCardView(video: video, showChannelLink: false)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                } else {
-                    Button {
-                        playerCoordinator.play(videoID: video.videoId)
-                    } label: {
-                        VideoCardView(video: video, showChannelLink: false)
+                }
+                .contextMenu {
+                    if video.playlistId == nil {
+                        VideoContextMenu(video: video)
+                    } else if let playlistId = video.playlistId,
+                              let url = URL(string: "https://www.youtube.com/playlist?list=\(playlistId)") {
+                        Button {
+                            UIPasteboard.general.url = url
+                        } label: {
+                            Label("リンクをコピー", systemImage: "doc.on.doc")
+                        }
+
+                        ShareLink(item: url) {
+                            Label("共有", systemImage: "square.and.arrow.up")
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
 
                 Divider()
