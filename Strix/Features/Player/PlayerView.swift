@@ -540,7 +540,7 @@ struct PlayerView: View {
                         .colorScheme(.dark)
                     }
             } else if let player = vm.player {
-                AVPlayerLayerView(player: player)
+                CustomPlayerView(player: player)
                     .aspectRatio(16 / 9, contentMode: .fit)
             }
         }
