@@ -55,6 +55,9 @@ struct PlayerContainerView: View {
         .onChange(of: vm.autoNextVideoID) { _, nextID in
             guard let nextID else { return }
             vm.autoNextVideoID = nil
+            // プレイリスト内遷移では vm 側で更新済みのインデックスを coordinator にも反映し、
+            // task(id:) 再実行時に initialIndex へ巻き戻されるのを防ぐ
+            coordinator.initialIndex = vm.playlistIndex
             coordinator.currentVideoID = nextID
         }
     }
