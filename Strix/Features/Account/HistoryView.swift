@@ -12,7 +12,9 @@ import SwiftUI
 final class HistoryViewModel {
     var videos: [VideoItem] = []
     var isLoading = true
+    var isLoadingMore = false
     var error: Error?
+    var continuationToken: String?
 
     private let contentClient: ContentClient
 
@@ -22,11 +24,35 @@ final class HistoryViewModel {
 
     func load() async {
         do {
-            videos = try await contentClient.fetchHistoryVideos()
+            let (items, token) = try await contentClient.fetchHistoryVideos()
+            videos = items
+            continuationToken = token
         } catch {
             self.error = error
         }
         isLoading = false
+    }
+
+    func reload() async {
+        isLoading = true
+        isLoadingMore = false
+        videos = []
+        continuationToken = nil
+        error = nil
+        await load()
+    }
+
+    func loadMore() async {
+        guard let token = continuationToken, !isLoadingMore, !isLoading else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let (newVideos, nextToken) = try await contentClient.fetchHistoryPage(token)
+            videos.append(contentsOf: newVideos)
+            continuationToken = nextToken
+        } catch {
+            // 次ページ取得の失敗はサイレントに扱う
+        }
     }
 }
 
@@ -64,12 +90,23 @@ struct HistoryView: View {
                                 VideoContextMenu(video: video)
                             }
                     }
+
+                    // 次ページ自動読み込み
+                    if vm.continuationToken != nil || vm.isLoadingMore {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .onAppear {
+                                Task { await vm.loadMore() }
+                            }
+                    }
                 }
                 .listStyle(.plain)
             }
         }
         .navigationTitle("視聴履歴")
         .navigationBarTitleDisplayMode(.large)
+        .refreshable { await vm.reload() }
         .task { await vm.load() }
     }
 }

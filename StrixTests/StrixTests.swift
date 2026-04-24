@@ -428,7 +428,7 @@ struct HistoryViewModelTests {
                 timePostedText: nil
             )
             let contentClient = ContentClient.mock(
-                fetchHistoryVideos: { [mockVideo] }
+                fetchHistoryVideos: { ([mockVideo], nil) }
             )
             let vm = HistoryViewModel(contentClient: contentClient)
 
@@ -555,9 +555,9 @@ struct ContentClientHistoryTests {
     @Test func fetchHistoryVideosReturnsWithoutThrowing() async throws {
         // 未認証環境では空配列を返す（ guard !cookies.isEmpty で弾かれる）
         // 少なくともクラッシュ・例外が発生しないことを確認する
-        let result = try await ContentClient.live.fetchHistoryVideos()
+        let (videos, _) = try await ContentClient.live.fetchHistoryVideos()
         // 未認証なら空、認証済みなら 1 件以上
-        #expect(result.allSatisfy { !$0.videoId.isEmpty })
+        #expect(videos.allSatisfy { !$0.videoId.isEmpty })
     }
 }
 

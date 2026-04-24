@@ -124,11 +124,11 @@ struct MiniPlayerView: View {
             .overlay(alignment: .topTrailing) {
                 Button(action: onClose) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.subheadline)
+                        .font(.title2)
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .black.opacity(0.5))
                 }
-                .padding(6)
+                .padding(8)
             }
             .frame(width: videoWidth, height: videoHeight)
             .position(x: displayX + videoWidth / 2, y: displayY + videoHeight / 2)

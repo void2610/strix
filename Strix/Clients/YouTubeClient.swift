@@ -64,8 +64,15 @@ extension YouTubeClient {
 
             for (name, fetch) in strategies {
                 do {
-                    let info = try await fetch()
+                    var info = try await fetch()
                     strixLog("player[\(name)] 成功")
+                    // tracking URL がない場合、WEB クライアントから補完して視聴履歴をYouTubeに記録できるようにする
+                    if info.playbackTrackingURLs == nil, name != "WEB" {
+                        strixLog("player[\(name)] tracking URL なし、WEB で補完を試みる")
+                        if let webInfo = try? await fetchWithWEB(videoID: videoID) {
+                            info.playbackTrackingURLs = webInfo.playbackTrackingURLs
+                        }
+                    }
                     return info
                 } catch {
                     strixLog("player[\(name)] 失敗: \(error.localizedDescription)")

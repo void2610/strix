@@ -42,7 +42,9 @@ struct ChannelPlaylistItem: Identifiable {
 struct ContentClient {
     var fetchHome: () async throws -> ([VideoItem], String?)
     var fetchHomePage: (String) async throws -> ([VideoItem], String?)
-    var fetchHistoryVideos: () async throws -> [VideoItem]
+    var fetchHistoryVideos: () async throws -> ([VideoItem], String?)
+    /// 視聴履歴の次ページを取得
+    var fetchHistoryPage: (String) async throws -> ([VideoItem], String?)
     var fetchPlaylistVideos: (String) async throws -> [VideoItem]
     var search: (String) async throws -> [VideoItem]
     /// 関連動画・動画オーナーアバター・説明欄データを返す
@@ -66,7 +68,8 @@ extension ContentClient {
     static func mock(
         fetchHome: @escaping () async throws -> ([VideoItem], String?) = { ([], nil) },
         fetchHomePage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
-        fetchHistoryVideos: @escaping () async throws -> [VideoItem] = { [] },
+        fetchHistoryVideos: @escaping () async throws -> ([VideoItem], String?) = { ([], nil) },
+        fetchHistoryPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         fetchPlaylistVideos: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?) = { _ in ([], nil, nil, nil, nil) },
@@ -77,7 +80,7 @@ extension ContentClient {
         fetchComments: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) },
         fetchCommentsPage: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
     }
 }
 
@@ -95,9 +98,11 @@ extension ContentClient {
                 return try await ContentClient.fetchHomeNextPageViaInnertubeAPI(cookies: "", continuation: continuation)
             },
             fetchHistoryVideos: {
-                guard AuthState.shared.isSignedIn else { return [] }
-                let (videos, _) = try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: "FEhistory", cookies: "")
-                return videos
+                guard AuthState.shared.isSignedIn else { return ([], nil) }
+                return try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: "FEhistory", cookies: "")
+            },
+            fetchHistoryPage: { continuation in
+                return try await ContentClient.fetchBrowseContinuationViaInnertubeAPI(cookies: "", continuation: continuation)
             },
             fetchPlaylistVideos: { playlistId in
 
