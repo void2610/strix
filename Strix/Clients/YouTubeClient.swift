@@ -93,8 +93,15 @@ extension YouTubeClient {
         request.setValue(YouTubeConstants.iosClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
         request.setValue(YouTubeConstants.iosClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
 
-        // Cookie + SAPISIDHASH 認証
-        ContentClient.applyAuth(to: &request)
+        // Cookie + SAPISIDHASH 認証（IOS クライアントは X-Origin を付けない）
+        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
+            let deduped = ContentClient.deduplicateCookies(cookies)
+            request.setValue(deduped, forHTTPHeaderField: "Cookie")
+            if let auth = ContentClient.buildSapisidHash(from: deduped) {
+                request.setValue(auth, forHTTPHeaderField: "Authorization")
+            }
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        }
 
         let body: [String: Any] = [
             "videoId": videoID,
