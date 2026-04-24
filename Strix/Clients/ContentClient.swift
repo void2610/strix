@@ -260,27 +260,9 @@ extension ContentClient {
 
     /// Innertube /browse API を認証付きで呼び出す共通メソッド（params 対応）。
     static func callBrowseAPI(browseId: String, params: String?, cookies: String) async throws -> [String: Any] {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-        var body: [String: Any] = [
-            "browseId": browseId,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        ]
+        var body: [String: Any] = ["browseId": browseId]
         if let params { body["params"] = params }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (data, _) = try await session.data(for: request)
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return try await InnertubeRequest.fetchWeb(url: YouTubeConstants.browseURL, body: body)
     }
 
     /// JSON ツリーから lockupViewModel (PLAYLIST/ALBUM) をパースしてプレイリスト一覧を返す。
@@ -381,24 +363,7 @@ extension ContentClient {
 
     /// /next API を共通ヘルパーで呼び出す。
     private static func callNextAPI(params: [String: Any], cookies: String) async throws -> [String: Any] {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/next?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-        var body: [String: Any] = params
-        body["context"] = ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (data, _) = try await session.data(for: request)
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return try await InnertubeRequest.fetchWeb(url: YouTubeConstants.nextURL, body: params)
     }
 
     /// /next エンドポイントでミックスリスト・プレイリストの動画一覧を取得する。
@@ -665,33 +630,12 @@ extension ContentClient {
         return "SAPISIDHASH \(timestamp)_\(hash)"
     }
 
-    /// URLSession で Innertube /browse (WEB client) を叩いて指定 browseId のコンテンツを取得する。
-    /// 認証: Cookie ヘッダー直接設定 + SAPISIDHASH + X-Goog-AuthUser: 0
+    /// Innertube /browse (WEB client) で指定 browseId のコンテンツを取得する。
     private static func fetchBrowseViaInnertubeAPI(browseId: String, cookies: String) async throws -> ([VideoItem], String?) {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-
-        let body: [String: Any] = [
-            "browseId": browseId,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        // Cookie ヘッダーをシステムに上書きされないよう httpShouldSetCookies=false に設定
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (data, response) = try await session.data(for: request)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return ([], nil)
-        }
+        let json = try await InnertubeRequest.fetchWeb(
+            url: YouTubeConstants.browseURL,
+            body: ["browseId": browseId]
+        )
         let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
         let nextToken = extractContinuationToken(in: json)
         strixLog("Innertube browse[\(browseId)] \(videos.count)件 continuation=\(nextToken != nil)")
@@ -700,29 +644,10 @@ extension ContentClient {
 
     /// Innertube /browse に continuation token を使って次ページを取得する。
     static func fetchBrowseContinuationViaInnertubeAPI(cookies: String, continuation: String) async throws -> ([VideoItem], String?) {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-
-        let body: [String: Any] = [
-            "continuation": continuation,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (data, response) = try await session.data(for: request)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return ([], nil)
-        }
+        let json = try await InnertubeRequest.fetchWeb(
+            url: YouTubeConstants.browseURL,
+            body: ["continuation": continuation]
+        )
         let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }
         let nextToken = extractContinuationToken(in: json)
         strixLog("Innertube browse continuation \(videos.count)件 continuation=\(nextToken != nil)")
@@ -1029,29 +954,11 @@ extension ContentClient {
     /// YouTube に feedbackToken を送信する（「興味なし」等）
     static func sendFeedback(tokens: [String]) async throws {
         guard !tokens.isEmpty else { return }
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/feedback?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-
-        let body: [String: Any] = [
+        try await InnertubeRequest.performWeb(url: YouTubeConstants.feedbackURL, body: [
             "feedbackTokens": tokens,
             "isFeedbackTokenUnencrypted": false,
-            "shouldMerge": false,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (_, response) = try await session.data(for: request)
-        // レスポンスを消費（エラーハンドリングは呼び出し元に委譲）
+            "shouldMerge": false
+        ])
     }
     /// 動画を「後で見る」プレイリストに追加する
     static func addToWatchLater(videoId: String) async throws {
@@ -1062,85 +969,27 @@ extension ContentClient {
     static func addToPlaylist(playlistId: String, videoId: String) async throws {
         // VLプレフィックスを除去してAPIに渡す
         let rawId = playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-
-        let body: [String: Any] = [
+        try await InnertubeRequest.performWeb(url: YouTubeConstants.editPlaylistURL, body: [
             "playlistId": rawId,
-            "actions": [
-                ["addedVideoId": videoId, "action": "ACTION_ADD_VIDEO"]
-            ],
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (_, response) = try await session.data(for: request)
-        _ = response
+            "actions": [["addedVideoId": videoId, "action": "ACTION_ADD_VIDEO"]]
+        ])
     }
 
     /// プレイリストそのものを削除（自身のプレイリストをライブラリから取り除く）
     static func deletePlaylist(playlistId: String) async throws {
         // VLプレフィックスを除去してAPIに渡す
         let rawId = playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/playlist/delete?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-
-        let body: [String: Any] = [
-            "playlistId": rawId,
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (_, response) = try await session.data(for: request)
-        _ = response
+        try await InnertubeRequest.performWeb(url: YouTubeConstants.deletePlaylistURL, body: [
+            "playlistId": rawId
+        ])
     }
 
     /// プレイリストから動画を削除する
     static func removeFromPlaylist(playlistId: String, videoId: String, setVideoId: String) async throws {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        applyAuth(to: &request)
-
-        let body: [String: Any] = [
+        try await InnertubeRequest.performWeb(url: YouTubeConstants.editPlaylistURL, body: [
             "playlistId": playlistId,
-            "actions": [
-                ["setVideoId": setVideoId, "removedVideoId": videoId, "action": "ACTION_REMOVE_VIDEO"]
-            ],
-            "context": ["client": ["clientName": "WEB", "clientVersion": "2.20250415.01.00", "hl": "ja", "gl": "JP"]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (_, response) = try await session.data(for: request)
-        _ = response
+            "actions": [["setVideoId": setVideoId, "removedVideoId": videoId, "action": "ACTION_REMOVE_VIDEO"]]
+        ])
     }
 }
 
