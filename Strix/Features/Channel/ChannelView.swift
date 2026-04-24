@@ -68,6 +68,7 @@ final class ChannelViewModel {
             tabVideos[tab] = videos
             tabContinuations[tab] = continuation
         } catch {
+            strixLog("チャンネルタブ取得エラー: \(error.localizedDescription)")
             tabVideos[tab] = []
         }
         isLoadingTab = false
@@ -83,6 +84,7 @@ final class ChannelViewModel {
             tabVideos[selectedTab, default: []].append(contentsOf: newVideos)
             tabContinuations[selectedTab] = nextToken
         } catch {
+            strixLog("チャンネル次ページ取得エラー: \(error.localizedDescription)")
             tabContinuations[selectedTab] = nil
         }
         isLoadingMore = false

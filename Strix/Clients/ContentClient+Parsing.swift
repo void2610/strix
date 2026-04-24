@@ -7,6 +7,16 @@
 
 import Foundation
 
+// MARK: - YouTube JSON ヘルパー
+
+/// YouTube API の `runs` 配列（`[{"text": "..."}]`）から text を結合する。
+extension Array where Element == [String: Any] {
+    /// runs 配列内の "text" を連結して返す
+    var joinedText: String {
+        compactMap { $0["text"] as? String }.joined()
+    }
+}
+
 // MARK: - 動画レンダラーパース・JSON ツリー探索
 
 extension ContentClient {

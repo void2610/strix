@@ -120,7 +120,7 @@ final class PlayerViewModel {
             let info = try await youtubeClient.fetchVideo(videoID)
             videoInfo = info
             // 音声のみモードなら音声 URL を使用、なければ通常ストリーム
-            let playURL = (isAudioOnly && info.audioOnlyURL != nil) ? info.audioOnlyURL! : info.streamURL
+            let playURL = (isAudioOnly ? info.audioOnlyURL : nil) ?? info.streamURL
             let avPlayer = AVPlayer(url: playURL)
             player = avPlayer
             // PiP コントロールで再生再開すると rate が 1.0 に戻るため、
@@ -197,7 +197,7 @@ final class PlayerViewModel {
             viewCountText = result.viewCount
             publishDateText = result.publishDate
         } catch {
-            // 関連動画の失敗はサイレントに扱う
+            strixLog("関連動画取得エラー: \(error.localizedDescription)")
         }
         isLoadingRelated = false
     }
@@ -208,7 +208,7 @@ final class PlayerViewModel {
             comments = result.comments
             commentsContinuation = result.continuation
         } catch {
-            // コメント取得の失敗はサイレントに扱う
+            strixLog("コメント取得エラー: \(error.localizedDescription)")
         }
         isLoadingComments = false
     }
@@ -222,7 +222,7 @@ final class PlayerViewModel {
             comments.append(contentsOf: result.comments)
             commentsContinuation = result.continuation
         } catch {
-            // 次ページ取得の失敗はサイレントに扱う
+            strixLog("コメント次ページ取得エラー: \(error.localizedDescription)")
         }
         isLoadingMoreComments = false
     }
