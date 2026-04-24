@@ -24,12 +24,12 @@ extension ContentClient {
         let name = c4?["title"] as? String
             ?? extractTextFromPageHeader(pageHeaderContent, key: "title")
         let handle = (c4?["channelHandleText"] as? [String: Any])?["runs"] as? [[String: Any]]
-        let handleText = handle?.compactMap({ $0["text"] as? String }).joined()
+        let handleText = handle?.joinedText
             ?? extractTextFromPageHeader(pageHeaderContent, key: "subtitle")
         let subscriberCount = (c4?["subscriberCountText"] as? [String: Any])?["simpleText"] as? String
             ?? extractMetadataFromPageHeader(pageHeaderContent, index: 0)
         let videoCount = (c4?["videosCountText"] as? [String: Any])?["runs"] as? [[String: Any]]
-        let videoCountText = videoCount?.compactMap({ $0["text"] as? String }).joined()
+        let videoCountText = videoCount?.joinedText
             ?? extractMetadataFromPageHeader(pageHeaderContent, index: 1)
 
         let avatarThumbs = (c4?["avatar"] as? [String: Any])?["thumbnails"] as? [[String: Any]]

@@ -142,6 +142,7 @@ final class PlaybackTracker {
     /// CPN（Client Playback Nonce）を生成する — YouTube 公式と同じ 16 文字のランダム文字列
     static func generateCPN() -> String {
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-        return String((0..<16).map { _ in chars.randomElement()! })
+        // chars は空でないため randomElement() は必ず値を返す
+        return String((0..<16).compactMap { _ in chars.randomElement() })
     }
 }

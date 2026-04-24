@@ -191,7 +191,7 @@ extension AccountClient {
     /// richShelfRenderer からタイトルを取得する。
     private static func extractShelfTitle(from shelf: [String: Any]) -> String? {
         guard let title = shelf["title"] as? [String: Any] else { return nil }
-        return (title["runs"] as? [[String: Any]])?.compactMap({ $0["text"] as? String }).joined()
+        return (title["runs"] as? [[String: Any]])?.joinedText
             ?? title["simpleText"] as? String
     }
 
@@ -208,7 +208,7 @@ extension AccountClient {
         playlist.title = extractShelfTitle(from: shelf) ?? fallbackTitle
         // subtitle から動画数を取得
         if let subtitle = shelf["subtitle"] as? [String: Any] {
-            playlist.videoCount = (subtitle["runs"] as? [[String: Any]])?.compactMap({ $0["text"] as? String }).joined()
+            playlist.videoCount = (subtitle["runs"] as? [[String: Any]])?.joinedText
                 ?? subtitle["simpleText"] as? String
         }
         return playlist
@@ -252,7 +252,7 @@ extension AccountClient {
                let playlistId = gridPlaylist["playlistId"] as? String {
                 var playlist = YTPlaylist(playlistId: playlistId)
                 let titleRuns = (gridPlaylist["title"] as? [String: Any])?["runs"] as? [[String: Any]]
-                playlist.title = titleRuns?.compactMap({ $0["text"] as? String }).joined()
+                playlist.title = titleRuns?.joinedText
                     ?? (gridPlaylist["title"] as? [String: Any])?["simpleText"] as? String
                 playlist.videoCount = (gridPlaylist["videoCountShortText"] as? [String: Any])?["simpleText"] as? String
                 if let thumbs = (gridPlaylist["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]] {

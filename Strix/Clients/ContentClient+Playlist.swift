@@ -66,7 +66,7 @@ extension ContentClient {
         return renderers.compactMap { renderer -> VideoItem? in
             guard let videoId = renderer["videoId"] as? String else { return nil }
             let title = (renderer["title"] as? [String: Any])?["simpleText"] as? String
-                ?? ((renderer["title"] as? [String: Any])?["runs"] as? [[String: Any]])?.compactMap({ $0["text"] as? String }).joined()
+                ?? ((renderer["title"] as? [String: Any])?["runs"] as? [[String: Any]])?.joinedText
                 ?? videoId
             let thumbs = (renderer["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
             let thumbURL = imageURL(from: thumbs?.last?["url"] as? String)

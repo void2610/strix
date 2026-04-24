@@ -86,6 +86,7 @@ final class HomeViewModel {
                 if !newVideos.isEmpty { return }  // 取得できたので完了
                 currentToken = nextToken           // 0件なら次のページを試みる
             } catch {
+                strixLog("ホームフィード次ページ取得エラー: \(error.localizedDescription)")
                 return
             }
         }

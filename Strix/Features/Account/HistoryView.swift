@@ -51,7 +51,7 @@ final class HistoryViewModel {
             videos.append(contentsOf: newVideos)
             continuationToken = nextToken
         } catch {
-            // 次ページ取得の失敗はサイレントに扱う
+            strixLog("視聴履歴次ページ取得エラー: \(error.localizedDescription)")
         }
     }
 }
