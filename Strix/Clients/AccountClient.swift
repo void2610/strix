@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CryptoKit
 import YouTubeKit
 
 // MARK: - アカウント情報モデル
@@ -126,42 +125,10 @@ extension AccountClient {
 
     /// Innertube /browse (WEB client) を認証付きで呼び出す共通メソッド。
     private static func callBrowseAPI(browseId: String, cookies: String) async throws -> [String: Any] {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w&prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20250415.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
+        return try await InnertubeRequest.fetchWebWithClientHeaders(
+            url: YouTubeConstants.browseWithKeyURL,
+            body: ["browseId": browseId]
         )
-
-        ContentClient.applyAuth(to: &request)
-
-        let body: [String: Any] = [
-            "browseId": browseId,
-            "context": ["client": [
-                "clientName": "WEB",
-                "clientVersion": "2.20250415.01.00",
-                "hl": "ja",
-                "gl": "JP"
-            ]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (data, _) = try await session.data(for: request)
-
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return [:]
-        }
-        return json
     }
 
     // MARK: - ライブラリ取得（FElibrary）
@@ -310,40 +277,10 @@ extension AccountClient {
 
     /// Innertube /account/account_menu (WEB client) でアカウント名・ハンドル・アバターを取得する。
     private static func fetchInfoViaInnertube(cookies: String) async throws -> AccountInfo {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/account/account_menu?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w&prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        request.setValue("2.20250415.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
+        let json = try await InnertubeRequest.fetchWebWithClientHeaders(
+            url: YouTubeConstants.accountMenuURL,
+            body: [:]
         )
-
-        ContentClient.applyAuth(to: &request)
-
-        let body: [String: Any] = [
-            "context": ["client": [
-                "clientName": "WEB",
-                "clientVersion": "2.20250415.01.00",
-                "hl": "ja",
-                "gl": "JP"
-            ]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-        let (data, _) = try await session.data(for: request)
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return AccountInfo(name: nil, handle: nil, avatarURL: nil)
-        }
 
         let actions = json["actions"] as? [[String: Any]]
         let popup = (actions?.first?["openPopupAction"] as? [String: Any])?["popup"] as? [String: Any]

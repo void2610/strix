@@ -86,43 +86,21 @@ extension YouTubeClient {
     // MARK: - IOS クライアント（HLS manifest を返す）
 
     private static func fetchWithIOS(videoID: String) async throws -> VideoInfo {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: YouTubeConstants.playerURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(
-            "com.google.ios.youtube/21.13.6 (iPhone16,2; U; CPU iOS 18_4 like Mac OS X;)",
-            forHTTPHeaderField: "User-Agent"
-        )
-        request.setValue("5", forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue("21.13.6", forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue(YouTubeConstants.iosUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(YouTubeConstants.iosClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(YouTubeConstants.iosClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
 
         // Cookie + SAPISIDHASH 認証
-        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
-            let deduped = ContentClient.deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = ContentClient.buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
-        }
+        ContentClient.applyAuth(to: &request)
 
         let body: [String: Any] = [
             "videoId": videoID,
             "contentCheckOk": true,
             "racyCheckOk": true,
-            "context": [
-                "client": [
-                    "clientName": "IOS",
-                    "clientVersion": "21.13.6",
-                    "deviceMake": "Apple",
-                    "deviceModel": "iPhone16,2",
-                    "osName": "iPhone",
-                    "osVersion": "18.4.0",
-                    "hl": "ja",
-                    "gl": "JP"
-                ]
-            ],
+            "context": YouTubeConstants.iosClientContext,
             "playbackContext": [
                 "contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS"]
             ]
@@ -147,39 +125,17 @@ extension YouTubeClient {
     // MARK: - WEB クライアント（Cookie 認証、combined formats を返す）
 
     private static func fetchWithWEB(videoID: String) async throws -> VideoInfo {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        request.setValue("1", forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue("2.20250415.01.00", forHTTPHeaderField: "X-Youtube-Client-Version")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-
-        // Cookie + SAPISIDHASH 認証
-        ContentClient.applyAuth(to: &request)
-
         let body: [String: Any] = [
             "videoId": videoID,
             "contentCheckOk": true,
             "racyCheckOk": true,
-            "context": [
-                "client": [
-                    "clientName": "WEB",
-                    "clientVersion": "2.20250415.01.00",
-                    "hl": "ja",
-                    "gl": "JP"
-                ]
-            ],
             "playbackContext": [
                 "contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS"]
             ]
         ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var request = try InnertubeRequest.webRequest(url: YouTubeConstants.playerURL, body: body)
+        request.setValue(YouTubeConstants.webClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(YouTubeConstants.webClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
 
         let json = try await sendPlayerRequest(request)
         let meta = extractVideoMeta(from: json, videoID: videoID)
@@ -265,14 +221,9 @@ extension YouTubeClient {
 
     /// /player リクエストを送信し、レスポンス JSON を返す。再生不可ならエラーを投げる。
     private static func sendPlayerRequest(_ request: URLRequest) async throws -> [String: Any] {
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpShouldSetCookies = false
-        sessionConfig.httpCookieAcceptPolicy = .never
-        let session = URLSession(configuration: sessionConfig)
-
         let data: Data
         do {
-            let (d, _) = try await session.data(for: request)
+            let (d, _) = try await InnertubeRequest.makeSession().data(for: request)
             data = d
         } catch {
             throw YouTubeClientError.networkError(error)
