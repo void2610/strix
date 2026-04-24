@@ -7,6 +7,18 @@
 
 import Foundation
 
+/// Innertube API のHTTPエラー
+enum InnertubeError: LocalizedError {
+    case httpError(statusCode: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .httpError(let code):
+            return "HTTP エラー: \(code)"
+        }
+    }
+}
+
 /// Innertube API リクエストの共通ビルダー。
 /// ヘッダー設定・セッション構成・認証適用・リクエスト送信を一元化する。
 enum InnertubeRequest {
@@ -44,14 +56,16 @@ enum InnertubeRequest {
     /// WEB クライアント用リクエストを送信し、JSON を返す
     static func fetchWeb(url: URL, body: [String: Any], authenticated: Bool = true) async throws -> [String: Any] {
         let request = try webRequest(url: url, body: body, authenticated: authenticated)
-        let (data, _) = try await makeSession().data(for: request)
+        let (data, response) = try await makeSession().data(for: request)
+        try validateHTTPResponse(response)
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
     /// WEB クライアント用リクエストを送信（レスポンス不要のアクション用）
     static func performWeb(url: URL, body: [String: Any]) async throws {
         let request = try webRequest(url: url, body: body)
-        let _ = try await makeSession().data(for: request)
+        let (_, response) = try await makeSession().data(for: request)
+        try validateHTTPResponse(response)
     }
 
     /// X-YouTube-Client-Name/Version ヘッダー付きの WEB リクエストを構築する（AccountClient 用）
@@ -65,7 +79,19 @@ enum InnertubeRequest {
     /// X-YouTube-Client-Name/Version ヘッダー付きの WEB リクエストを送信し、JSON を返す
     static func fetchWebWithClientHeaders(url: URL, body: [String: Any]) async throws -> [String: Any] {
         let request = try webRequestWithClientHeaders(url: url, body: body)
-        let (data, _) = try await makeSession().data(for: request)
+        let (data, response) = try await makeSession().data(for: request)
+        try validateHTTPResponse(response)
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    // MARK: - HTTP レスポンス検証
+
+    /// HTTP ステータスコードが成功範囲外ならエラーを投げる
+    private static func validateHTTPResponse(_ response: URLResponse) throws {
+        guard let httpResponse = response as? HTTPURLResponse else { return }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            strixLog("HTTP エラー: \(httpResponse.statusCode) \(httpResponse.url?.absoluteString ?? "")")
+            throw InnertubeError.httpError(statusCode: httpResponse.statusCode)
+        }
     }
 }
