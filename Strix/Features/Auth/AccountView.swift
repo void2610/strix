@@ -77,6 +77,7 @@ struct AccountView: View {
     @State private var showLogin = false
     @State private var showLog = false
     @State private var path = NavigationPath()
+    @State private var showDeleteAlert = false
     @State private var pendingDeletion: YTPlaylist?
     @Environment(PlayerCoordinator.self) private var playerCoordinator
     private let authState = AuthState.shared
@@ -114,21 +115,18 @@ struct AccountView: View {
         }
         .refreshable { await vm.reload() }
         .sheet(isPresented: $showLog) { LogView() }
-        .alert(
-            "プレイリストを削除",
-            isPresented: Binding(
-                get: { pendingDeletion != nil },
-                set: { if !$0 { pendingDeletion = nil } }
-            ),
-            presenting: pendingDeletion
-        ) { playlist in
+        .alert("プレイリストを削除", isPresented: $showDeleteAlert) {
             Button("削除", role: .destructive) {
-                Task { await vm.deletePlaylist(playlist) }
+                if let playlist = pendingDeletion {
+                    Task { await vm.deletePlaylist(playlist) }
+                }
                 pendingDeletion = nil
             }
-            Button("キャンセル", role: .cancel) { pendingDeletion = nil }
-        } message: { playlist in
-            Text("「\(playlist.title ?? "プレイリスト")」を削除しますか？\nこの操作は取り消せません。")
+            Button("キャンセル", role: .cancel) {
+                pendingDeletion = nil
+            }
+        } message: {
+            Text("「\(pendingDeletion?.title ?? "プレイリスト")」を削除しますか？\nこの操作は取り消せません。")
         }
         .task { await vm.load() }
     }
@@ -237,6 +235,7 @@ struct AccountView: View {
                     .contextMenu {
                         Button(role: .destructive) {
                             pendingDeletion = playlist
+                            showDeleteAlert = true
                         } label: {
                             Label("リストから削除", systemImage: "trash")
                         }

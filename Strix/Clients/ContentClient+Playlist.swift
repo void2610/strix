@@ -40,8 +40,9 @@ extension ContentClient {
     static func deletePlaylist(playlistId: String) async throws {
         // VLプレフィックスを除去してAPIに渡す
         let rawId = playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId
-        try await InnertubeRequest.performWeb(url: YouTubeConstants.deletePlaylistURL, body: [
-            "playlistId": rawId
+        try await InnertubeRequest.performWeb(url: YouTubeConstants.editPlaylistURL, body: [
+            "playlistId": rawId,
+            "actions": [["action": "ACTION_REMOVE_PLAYLIST"]]
         ])
     }
 
