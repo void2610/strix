@@ -113,9 +113,7 @@ final class PlayerViewModel {
         do {
             let info = try await youtubeClient.fetchVideo(videoID)
             videoInfo = info
-            // 音声のみモードなら音声 URL を使用、なければ通常ストリーム
-            let playURL = (isAudioOnly ? info.audioOnlyURL : nil) ?? info.streamURL
-            let avPlayer = AVPlayer(url: playURL)
+            let avPlayer = AVPlayer(playerItem: makePlayerItem(info: info, audioOnly: isAudioOnly))
             player = avPlayer
             // PiP コントロールで再生再開すると rate が 1.0 に戻るため、
             // rateDidChangeNotification で監視して playbackRate を復元する
@@ -130,13 +128,7 @@ final class PlayerViewModel {
                 }
             }
             // 動画終端: ループ or 次動画自動再生（通知ベース）
-            endObserver = NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: avPlayer.currentItem,
-                queue: .main
-            ) { [weak self] _ in
-                self?.handlePlaybackEnded()
-            }
+            registerEndObserver(for: avPlayer)
             // バックアップ: 再生位置の定期監視で終端を検出（通知が来ない場合の保険）
             let interval = CMTime(seconds: 1, preferredTimescale: 1)
             timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
@@ -247,22 +239,52 @@ final class PlayerViewModel {
         autoPlayNext.toggle()
     }
 
-    /// 通常モード ↔ 音声のみモードを切り替え、現在の動画をリロードする
+    /// 通常モード ↔ 音声のみモードを切り替える。
+    /// プレイヤーを作り直すと NowPlaying・トラッカー・各 observer が古いインスタンスを
+    /// 参照したまま旧ストリームが流れ続ける（二重再生・通信量増）ため、
+    /// 同じ AVPlayer のままアイテムだけ差し替える。
     func toggleAudioOnly() {
-        guard let info = videoInfo else { return }
+        guard let info = videoInfo, let player else { return }
         isAudioOnly.toggle()
-        let targetURL = (isAudioOnly ? info.audioOnlyURL : nil) ?? info.streamURL
-        let currentTime = player?.currentTime()
-        let wasPlaying = player?.rate != 0
+        let currentTime = player.currentTime()
+        let wasPlaying = player.rate != 0
 
-        let newPlayer = AVPlayer(url: targetURL)
-        player = newPlayer
-        if let time = currentTime, time.isValid {
-            newPlayer.seek(to: time)
+        player.replaceCurrentItem(with: makePlayerItem(info: info, audioOnly: isAudioOnly))
+        // 終端監視はアイテム単位のため貼り直す
+        registerEndObserver(for: player)
+        if currentTime.isValid {
+            player.seek(to: currentTime)
         }
         if wasPlaying {
-            newPlayer.play()
-            if playbackRate != 1.0 { newPlayer.rate = playbackRate }
+            player.play()
+            if playbackRate != 1.0 { player.rate = playbackRate }
+        }
+    }
+
+    /// 再生モードに応じた AVPlayerItem を作る。
+    /// 音声のみモードで音声 URL が取得できなかった場合も動画をそのまま流さず、
+    /// ビットレート上限を掛けて HLS の最低画質を選ばせることで通信量を抑える。
+    func makePlayerItem(info: VideoInfo, audioOnly: Bool) -> AVPlayerItem {
+        if audioOnly {
+            if let audioURL = info.audioOnlyURL {
+                return AVPlayerItem(url: audioURL)
+            }
+            let item = AVPlayerItem(url: info.streamURL)
+            item.preferredPeakBitRate = 300_000
+            return item
+        }
+        return AVPlayerItem(url: info.streamURL)
+    }
+
+    /// 動画終端通知の監視を登録する（AVPlayerItem 単位のため、アイテム差し替え時に貼り直す）
+    private func registerEndObserver(for player: AVPlayer) {
+        if let obs = endObserver { NotificationCenter.default.removeObserver(obs) }
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handlePlaybackEnded()
         }
     }
 

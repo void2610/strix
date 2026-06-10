@@ -300,15 +300,10 @@ extension YouTubeClient {
             channelAvatarURL = ContentClient.findAvatarURL(in: json)
         }
 
-        // 音声のみ URL: adaptiveFormats から最高品質の audio を取得
+        // 音声のみ URL: adaptiveFormats から AVPlayer で再生可能な audio を取得
         var audioOnlyURL: URL? = nil
         if let adaptiveFormats = (json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]] {
-            let audioFormats = adaptiveFormats.filter { ($0["mimeType"] as? String)?.hasPrefix("audio/") == true }
-            // ビットレートが最も高いものを選択
-            let best = audioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
-            if let urlStr = best?["url"] as? String {
-                audioOnlyURL = URL(string: urlStr)
-            }
+            audioOnlyURL = selectAudioOnlyURL(from: adaptiveFormats)
         }
 
         // 再生トラッキング URL を抽出
@@ -323,6 +318,19 @@ extension YouTubeClient {
         }
 
         return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL, trackingURLs)
+    }
+
+    /// adaptiveFormats から音声のみモードで使う URL を選ぶ。
+    /// AVPlayer は opus (audio/webm) をデコードできないため AAC (audio/mp4) に限定し、
+    /// その中で最高ビットレートのものを返す。
+    /// url を持たない（signatureCipher のみの）フォーマットは再生できないので除外する。
+    static func selectAudioOnlyURL(from adaptiveFormats: [[String: Any]]) -> URL? {
+        let playableAudioFormats = adaptiveFormats.filter {
+            ($0["mimeType"] as? String)?.hasPrefix("audio/mp4") == true && $0["url"] is String
+        }
+        let best = playableAudioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
+        guard let urlStr = best?["url"] as? String else { return nil }
+        return URL(string: urlStr)
     }
 }
 
