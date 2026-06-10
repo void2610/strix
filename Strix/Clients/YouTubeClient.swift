@@ -58,6 +58,8 @@ extension YouTubeClient {
             // 直列フォールバックだと弱い電波で IOS のタイムアウト待ちがそのまま再生開始の遅延になるため、
             // WEB を先に走らせておき、IOS 失敗時は即座にその結果へ切り替える。
             let webTask = Task { try await fetchWithWEB(videoID: videoID) }
+            // 成功・失敗・呼び出し側キャンセルのいずれで抜けても並列の WEB リクエストを確実に止める
+            defer { webTask.cancel() }
 
             do {
                 var info = try await fetchWithIOS(videoID: videoID)
@@ -72,12 +74,12 @@ extension YouTubeClient {
                     }
                     info.playbackTrackingURLs = (try? await webTask.value)?.playbackTrackingURLs
                     deadline.cancel()
-                } else {
-                    webTask.cancel()
                 }
                 return info
             } catch {
                 strixLog("player[IOS] 失敗: \(error.localizedDescription)")
+                // 呼び出し側のキャンセルならフォールバックせず即終了する
+                try Task.checkCancellation()
             }
 
             do {
@@ -332,6 +334,16 @@ extension YouTubeClient {
         guard let urlStr = best?["url"] as? String else { return nil }
         return URL(string: urlStr)
     }
+
+    /// googlevideo のストリーム URL 一覧から音声のみモードで使う URL を選ぶ（WebPage フォールバック用）。
+    /// selectAudioOnlyURL と同じ基準で、AVPlayer がデコードできない opus (audio/webm) は選ばず
+    /// AAC (audio/mp4) に限定する。mime パラメータは URL エンコードされている場合がある。
+    static func selectMp4AudioURL(fromStreamURLs streams: [String]) -> URL? {
+        let urlStr = streams.first {
+            $0.contains("mime=audio%2Fmp4") || $0.contains("mime=audio/mp4")
+        }
+        return urlStr.flatMap { URL(string: $0) }
+    }
 }
 
 // MARK: - WKWebView ページ読み込みデリゲート
@@ -422,8 +434,7 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                 }
 
                 if let urlStr = selectedURL, let streamURL = URL(string: urlStr) {
-                    let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
-                    let audioURL = audioURLStr.flatMap { URL(string: $0) }
+                    let audioURL = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
                     self.resolve(with: .success(VideoInfo(
                         streamURL: streamURL, audioOnlyURL: audioURL,
                         title: title, thumbnailURL: thumbnail,
@@ -435,8 +446,7 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
 
                 // combined がない場合は最後の数回で adaptive にフォールバック
                 if attempt >= maxAttempts - 2, let firstURL = streams.first, let streamURL = URL(string: firstURL) {
-                    let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
-                    let audioURL = audioURLStr.flatMap { URL(string: $0) }
+                    let audioURL = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
                     self.resolve(with: .success(VideoInfo(
                         streamURL: streamURL, audioOnlyURL: audioURL,
                         title: title, thumbnailURL: thumbnail,

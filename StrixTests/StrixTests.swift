@@ -2209,3 +2209,36 @@ struct PlayerViewModelAudioOnlyTests {
         #expect(item.preferredPeakBitRate == 0)
     }
 }
+
+// MARK: - 音声のみモード: WebPage フォールバックの音声 URL 選択テスト
+
+struct Mp4AudioStreamURLSelectionTests {
+
+    /// URL エンコードされた mime=audio%2Fmp4 を選ぶこと
+    @Test func picksEncodedMp4AudioURL() {
+        let streams = [
+            "https://example.googlevideo.com/videoplayback?itag=22&mime=video%2Fmp4",
+            "https://example.googlevideo.com/videoplayback?itag=140&mime=audio%2Fmp4"
+        ]
+        let url = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
+        #expect(url?.absoluteString.contains("itag=140") == true)
+    }
+
+    /// エンコードされていない mime=audio/mp4 も選べること
+    @Test func picksUnencodedMp4AudioURL() {
+        let streams = [
+            "https://example.googlevideo.com/videoplayback?itag=140&mime=audio/mp4"
+        ]
+        let url = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
+        #expect(url != nil)
+    }
+
+    /// AVPlayer が再生できない opus (audio/webm) は選ばず nil を返すこと
+    @Test func skipsWebmAudioURL() {
+        let streams = [
+            "https://example.googlevideo.com/videoplayback?itag=251&mime=audio%2Fwebm",
+            "https://example.googlevideo.com/videoplayback?itag=22&mime=video%2Fmp4"
+        ]
+        #expect(YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams) == nil)
+    }
+}
