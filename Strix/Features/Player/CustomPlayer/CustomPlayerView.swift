@@ -55,6 +55,12 @@ struct CustomPlayerView: View {
             if let player {
                 // バックグラウンド自動停止回避は PlayerLayerView 内部の Coordinator で完結
                 PlayerLayerView(player: player)
+
+                // 音声のみモード: 映像トラックがない（またはフォールバックの低画質映像）ため
+                // 代わりにサムネイルを表示する
+                if vm.isAudioOnly {
+                    audioOnlyArtwork
+                }
             } else {
                 Color.black
             }
@@ -92,6 +98,25 @@ struct CustomPlayerView: View {
         .onChange(of: vm.loadedVideoID) { _, _ in
             rebindObservers()
         }
+        // 音声のみ切替時はアイテムが差し替わるため、アイテム単位の KVO を貼り直す
+        .onChange(of: vm.isAudioOnly) { _, _ in
+            rebindObservers()
+        }
+    }
+
+    /// 音声のみモードで映像の代わりに表示するサムネイル
+    private var audioOnlyArtwork: some View {
+        ZStack {
+            Color.black
+            if let urlStr = vm.videoInfo?.thumbnailURL, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Color.black
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: - ダブルタップスキップ

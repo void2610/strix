@@ -23,13 +23,21 @@ enum InnertubeError: LocalizedError {
 /// ヘッダー設定・セッション構成・認証適用・リクエスト送信を一元化する。
 enum InnertubeRequest {
 
-    /// Cookie をシステムに上書きされないよう設定した ephemeral セッションを返す
-    static func makeSession() -> URLSession {
+    /// 全 Innertube リクエストで共有するセッション。
+    /// 単一インスタンスにすることでコネクション（DNS/TLS）を再利用し、
+    /// 弱い電波で最も失敗・遅延しやすいハンドシェイクのやり直しを避ける。
+    /// Cookie はシステムに上書きされないよう無効化している。
+    static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
+        // 一時的な電波断では即エラーにせず接続回復を待つ
+        config.waitsForConnectivity = true
+        // ハングしたリクエストは早めに打ち切ってフォールバックに進ませる
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
         return URLSession(configuration: config)
-    }
+    }()
 
     /// WEB クライアント用の POST リクエストを構築する
     static func webRequest(url: URL, body: [String: Any], authenticated: Bool = true) throws -> URLRequest {
@@ -56,7 +64,7 @@ enum InnertubeRequest {
     /// WEB クライアント用リクエストを送信し、JSON を返す
     static func fetchWeb(url: URL, body: [String: Any], authenticated: Bool = true) async throws -> [String: Any] {
         let request = try webRequest(url: url, body: body, authenticated: authenticated)
-        let (data, response) = try await makeSession().data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
@@ -64,7 +72,7 @@ enum InnertubeRequest {
     /// WEB クライアント用リクエストを送信（レスポンス不要のアクション用）
     static func performWeb(url: URL, body: [String: Any]) async throws {
         let request = try webRequest(url: url, body: body)
-        let (_, response) = try await makeSession().data(for: request)
+        let (_, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
     }
 
@@ -79,7 +87,7 @@ enum InnertubeRequest {
     /// X-YouTube-Client-Name/Version ヘッダー付きの WEB リクエストを送信し、JSON を返す
     static func fetchWebWithClientHeaders(url: URL, body: [String: Any]) async throws -> [String: Any] {
         let request = try webRequestWithClientHeaders(url: url, body: body)
-        let (data, response) = try await makeSession().data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }

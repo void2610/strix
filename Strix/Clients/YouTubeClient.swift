@@ -54,32 +54,50 @@ enum YouTubeClientError: LocalizedError {
 extension YouTubeClient {
     static let live = YouTubeClient(
         fetchVideo: { videoID in
-            // IOS → WEB → WebPage(WKWebView) の順にフォールバック
-            let strategies: [(String, () async throws -> VideoInfo)] = [
-                ("IOS", { try await fetchWithIOS(videoID: videoID) }),
-                ("WEB", { try await fetchWithWEB(videoID: videoID) }),
-                ("WebPage", { try await fetchWithWebPage(videoID: videoID) })
-            ]
-            var lastError: Error = YouTubeClientError.streamNotFound
+            // IOS と WEB を並列で発行し、ABR（適応ビットレート）の効く HLS を返す IOS を優先する。
+            // 直列フォールバックだと弱い電波で IOS のタイムアウト待ちがそのまま再生開始の遅延になるため、
+            // WEB を先に走らせておき、IOS 失敗時は即座にその結果へ切り替える。
+            let webTask = Task { try await fetchWithWEB(videoID: videoID) }
+            // 成功・失敗・呼び出し側キャンセルのいずれで抜けても並列の WEB リクエストを確実に止める
+            defer { webTask.cancel() }
 
-            for (name, fetch) in strategies {
-                do {
-                    var info = try await fetch()
-                    strixLog("player[\(name)] 成功")
-                    // tracking URL がない場合、WEB クライアントから補完して視聴履歴をYouTubeに記録できるようにする
-                    if info.playbackTrackingURLs == nil, name != "WEB" {
-                        strixLog("player[\(name)] tracking URL なし、WEB で補完を試みる")
-                        if let webInfo = try? await fetchWithWEB(videoID: videoID) {
-                            info.playbackTrackingURLs = webInfo.playbackTrackingURLs
-                        }
+            do {
+                var info = try await fetchWithIOS(videoID: videoID)
+                strixLog("player[IOS] 成功")
+                if info.playbackTrackingURLs == nil {
+                    // 並列実行中の WEB から視聴履歴トラッキング URL を補完する。
+                    // 再生開始を遅らせないよう最大 2 秒で打ち切る
+                    strixLog("player[IOS] tracking URL なし、WEB で補完を試みる")
+                    let deadline = Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        webTask.cancel()
                     }
-                    return info
-                } catch {
-                    strixLog("player[\(name)] 失敗: \(error.localizedDescription)")
-                    lastError = error
+                    info.playbackTrackingURLs = (try? await webTask.value)?.playbackTrackingURLs
+                    deadline.cancel()
                 }
+                return info
+            } catch {
+                strixLog("player[IOS] 失敗: \(error.localizedDescription)")
+                // 呼び出し側のキャンセルならフォールバックせず即終了する
+                try Task.checkCancellation()
             }
-            throw lastError
+
+            do {
+                let info = try await webTask.value
+                strixLog("player[WEB] 成功")
+                return info
+            } catch {
+                strixLog("player[WEB] 失敗: \(error.localizedDescription)")
+            }
+
+            do {
+                let info = try await fetchWithWebPage(videoID: videoID)
+                strixLog("player[WebPage] 成功")
+                return info
+            } catch {
+                strixLog("player[WebPage] 失敗: \(error.localizedDescription)")
+                throw error
+            }
         }
     )
 
@@ -230,7 +248,7 @@ extension YouTubeClient {
     private static func sendPlayerRequest(_ request: URLRequest) async throws -> [String: Any] {
         let data: Data
         do {
-            let (d, _) = try await InnertubeRequest.makeSession().data(for: request)
+            let (d, _) = try await InnertubeRequest.session.data(for: request)
             data = d
         } catch {
             throw YouTubeClientError.networkError(error)
@@ -284,15 +302,10 @@ extension YouTubeClient {
             channelAvatarURL = ContentClient.findAvatarURL(in: json)
         }
 
-        // 音声のみ URL: adaptiveFormats から最高品質の audio を取得
+        // 音声のみ URL: adaptiveFormats から AVPlayer で再生可能な audio を取得
         var audioOnlyURL: URL? = nil
         if let adaptiveFormats = (json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]] {
-            let audioFormats = adaptiveFormats.filter { ($0["mimeType"] as? String)?.hasPrefix("audio/") == true }
-            // ビットレートが最も高いものを選択
-            let best = audioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
-            if let urlStr = best?["url"] as? String {
-                audioOnlyURL = URL(string: urlStr)
-            }
+            audioOnlyURL = selectAudioOnlyURL(from: adaptiveFormats)
         }
 
         // 再生トラッキング URL を抽出
@@ -307,6 +320,29 @@ extension YouTubeClient {
         }
 
         return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL, trackingURLs)
+    }
+
+    /// adaptiveFormats から音声のみモードで使う URL を選ぶ。
+    /// AVPlayer は opus (audio/webm) をデコードできないため AAC (audio/mp4) に限定し、
+    /// その中で最高ビットレートのものを返す。
+    /// url を持たない（signatureCipher のみの）フォーマットは再生できないので除外する。
+    static func selectAudioOnlyURL(from adaptiveFormats: [[String: Any]]) -> URL? {
+        let playableAudioFormats = adaptiveFormats.filter {
+            ($0["mimeType"] as? String)?.hasPrefix("audio/mp4") == true && $0["url"] is String
+        }
+        let best = playableAudioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
+        guard let urlStr = best?["url"] as? String else { return nil }
+        return URL(string: urlStr)
+    }
+
+    /// googlevideo のストリーム URL 一覧から音声のみモードで使う URL を選ぶ（WebPage フォールバック用）。
+    /// selectAudioOnlyURL と同じ基準で、AVPlayer がデコードできない opus (audio/webm) は選ばず
+    /// AAC (audio/mp4) に限定する。mime パラメータは URL エンコードされている場合がある。
+    static func selectMp4AudioURL(fromStreamURLs streams: [String]) -> URL? {
+        let urlStr = streams.first {
+            $0.contains("mime=audio%2Fmp4") || $0.contains("mime=audio/mp4")
+        }
+        return urlStr.flatMap { URL(string: $0) }
     }
 }
 
@@ -398,8 +434,7 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
                 }
 
                 if let urlStr = selectedURL, let streamURL = URL(string: urlStr) {
-                    let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
-                    let audioURL = audioURLStr.flatMap { URL(string: $0) }
+                    let audioURL = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
                     self.resolve(with: .success(VideoInfo(
                         streamURL: streamURL, audioOnlyURL: audioURL,
                         title: title, thumbnailURL: thumbnail,
@@ -411,8 +446,7 @@ private final class WebPagePlayerDelegate: NSObject, WKNavigationDelegate {
 
                 // combined がない場合は最後の数回で adaptive にフォールバック
                 if attempt >= maxAttempts - 2, let firstURL = streams.first, let streamURL = URL(string: firstURL) {
-                    let audioURLStr = streams.first(where: { $0.contains("mime=audio") })
-                    let audioURL = audioURLStr.flatMap { URL(string: $0) }
+                    let audioURL = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
                     self.resolve(with: .success(VideoInfo(
                         streamURL: streamURL, audioOnlyURL: audioURL,
                         title: title, thumbnailURL: thumbnail,

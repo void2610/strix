@@ -8,6 +8,7 @@
 import Testing
 import Foundation
 import SwiftData
+import AVFoundation
 import YouTubeKit
 @testable import Strix
 
@@ -2088,5 +2089,156 @@ struct PlaylistDetailViewModelLoadTests {
         #expect(vm.isLoading == false)
         #expect(vm.error != nil)
         #expect(vm.videos.isEmpty)
+    }
+}
+
+// MARK: - InnertubeRequest 共有セッション設定テスト
+
+struct InnertubeRequestSessionTests {
+
+    /// セッションが単一インスタンスとして共有されること（コネクション再利用のため）
+    @Test func sessionIsSharedInstance() {
+        #expect(InnertubeRequest.session === InnertubeRequest.session)
+    }
+
+    /// Cookie がシステムに上書きされないよう無効化されていること
+    @Test func sessionDisablesCookieHandling() {
+        let config = InnertubeRequest.session.configuration
+        #expect(config.httpShouldSetCookies == false)
+        #expect(config.httpCookieAcceptPolicy == .never)
+    }
+
+    /// 弱い電波向けの設定: 一時的な切断は待機し、ハングは早めに打ち切ること
+    @Test func sessionIsTunedForWeakNetwork() {
+        let config = InnertubeRequest.session.configuration
+        #expect(config.waitsForConnectivity == true)
+        #expect(config.timeoutIntervalForRequest == 15)
+        #expect(config.timeoutIntervalForResource == 30)
+    }
+}
+
+// MARK: - 音声のみモード: フォーマット選択テスト
+
+struct AudioOnlyFormatSelectionTests {
+
+    private func format(mime: String, bitrate: Int, url: String? = "https://example.com/a") -> [String: Any] {
+        var f: [String: Any] = ["mimeType": mime, "bitrate": bitrate]
+        if let url { f["url"] = url }
+        return f
+    }
+
+    /// AVPlayer が再生できない opus (audio/webm) はビットレートが高くても選ばないこと
+    @Test func prefersMp4AudioOverHigherBitrateWebm() {
+        let formats = [
+            format(mime: "audio/webm; codecs=\"opus\"", bitrate: 160_000, url: "https://example.com/opus"),
+            format(mime: "audio/mp4; codecs=\"mp4a.40.2\"", bitrate: 128_000, url: "https://example.com/aac")
+        ]
+        let url = YouTubeClient.selectAudioOnlyURL(from: formats)
+        #expect(url?.absoluteString == "https://example.com/aac")
+    }
+
+    /// audio/mp4 の中では最高ビットレートを選ぶこと
+    @Test func picksHighestBitrateMp4Audio() {
+        let formats = [
+            format(mime: "audio/mp4; codecs=\"mp4a.40.5\"", bitrate: 48_000, url: "https://example.com/low"),
+            format(mime: "audio/mp4; codecs=\"mp4a.40.2\"", bitrate: 128_000, url: "https://example.com/high"),
+            format(mime: "video/mp4; codecs=\"avc1\"", bitrate: 1_000_000)
+        ]
+        let url = YouTubeClient.selectAudioOnlyURL(from: formats)
+        #expect(url?.absoluteString == "https://example.com/high")
+    }
+
+    /// 再生可能な音声フォーマットがない場合は nil を返すこと
+    @Test func returnsNilWhenNoMp4Audio() {
+        let formats = [
+            format(mime: "video/mp4; codecs=\"avc1\"", bitrate: 1_000_000),
+            format(mime: "audio/webm; codecs=\"opus\"", bitrate: 160_000)
+        ]
+        #expect(YouTubeClient.selectAudioOnlyURL(from: formats) == nil)
+    }
+
+    /// url を持たない（signatureCipher のみの）フォーマットは選ばないこと
+    @Test func skipsFormatsWithoutDirectURL() {
+        let formats = [
+            format(mime: "audio/mp4; codecs=\"mp4a.40.2\"", bitrate: 128_000, url: nil),
+            format(mime: "audio/mp4; codecs=\"mp4a.40.5\"", bitrate: 48_000, url: "https://example.com/low")
+        ]
+        let url = YouTubeClient.selectAudioOnlyURL(from: formats)
+        #expect(url?.absoluteString == "https://example.com/low")
+    }
+}
+
+// MARK: - 音声のみモード: PlayerItem 生成テスト
+
+struct PlayerViewModelAudioOnlyTests {
+
+    private func makeInfo(audioURL: URL?) -> VideoInfo {
+        VideoInfo(
+            streamURL: URL(string: "https://example.com/video.m3u8")!,
+            audioOnlyURL: audioURL,
+            title: "テスト動画",
+            thumbnailURL: "",
+            channelId: nil,
+            channelName: nil,
+            channelAvatarURL: nil
+        )
+    }
+
+    /// 音声のみモードでは音声 URL のアイテムを作ること
+    @Test func audioOnlyUsesAudioURL() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+        let audio = URL(string: "https://example.com/audio.m4a")!
+        let item = vm.makePlayerItem(info: makeInfo(audioURL: audio), audioOnly: true)
+        #expect((item.asset as? AVURLAsset)?.url == audio)
+    }
+
+    /// 音声 URL がない場合は動画にフォールバックしつつビットレート上限で通信量を抑えること
+    @Test func audioOnlyWithoutAudioURLCapsBitrate() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+        let item = vm.makePlayerItem(info: makeInfo(audioURL: nil), audioOnly: true)
+        #expect((item.asset as? AVURLAsset)?.url.absoluteString == "https://example.com/video.m3u8")
+        #expect(item.preferredPeakBitRate == 300_000)
+    }
+
+    /// 通常モードでは動画ストリームをそのまま使い、ビットレート上限を掛けないこと
+    @Test func normalModeUsesStreamURLWithoutCap() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+        let audio = URL(string: "https://example.com/audio.m4a")!
+        let item = vm.makePlayerItem(info: makeInfo(audioURL: audio), audioOnly: false)
+        #expect((item.asset as? AVURLAsset)?.url.absoluteString == "https://example.com/video.m3u8")
+        #expect(item.preferredPeakBitRate == 0)
+    }
+}
+
+// MARK: - 音声のみモード: WebPage フォールバックの音声 URL 選択テスト
+
+struct Mp4AudioStreamURLSelectionTests {
+
+    /// URL エンコードされた mime=audio%2Fmp4 を選ぶこと
+    @Test func picksEncodedMp4AudioURL() {
+        let streams = [
+            "https://example.googlevideo.com/videoplayback?itag=22&mime=video%2Fmp4",
+            "https://example.googlevideo.com/videoplayback?itag=140&mime=audio%2Fmp4"
+        ]
+        let url = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
+        #expect(url?.absoluteString.contains("itag=140") == true)
+    }
+
+    /// エンコードされていない mime=audio/mp4 も選べること
+    @Test func picksUnencodedMp4AudioURL() {
+        let streams = [
+            "https://example.googlevideo.com/videoplayback?itag=140&mime=audio/mp4"
+        ]
+        let url = YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams)
+        #expect(url != nil)
+    }
+
+    /// AVPlayer が再生できない opus (audio/webm) は選ばず nil を返すこと
+    @Test func skipsWebmAudioURL() {
+        let streams = [
+            "https://example.googlevideo.com/videoplayback?itag=251&mime=audio%2Fwebm",
+            "https://example.googlevideo.com/videoplayback?itag=22&mime=video%2Fmp4"
+        ]
+        #expect(YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams) == nil)
     }
 }
