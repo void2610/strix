@@ -2090,3 +2090,28 @@ struct PlaylistDetailViewModelLoadTests {
         #expect(vm.videos.isEmpty)
     }
 }
+
+// MARK: - InnertubeRequest 共有セッション設定テスト
+
+struct InnertubeRequestSessionTests {
+
+    /// セッションが単一インスタンスとして共有されること（コネクション再利用のため）
+    @Test func sessionIsSharedInstance() {
+        #expect(InnertubeRequest.session === InnertubeRequest.session)
+    }
+
+    /// Cookie がシステムに上書きされないよう無効化されていること
+    @Test func sessionDisablesCookieHandling() {
+        let config = InnertubeRequest.session.configuration
+        #expect(config.httpShouldSetCookies == false)
+        #expect(config.httpCookieAcceptPolicy == .never)
+    }
+
+    /// 弱い電波向けの設定: 一時的な切断は待機し、ハングは早めに打ち切ること
+    @Test func sessionIsTunedForWeakNetwork() {
+        let config = InnertubeRequest.session.configuration
+        #expect(config.waitsForConnectivity == true)
+        #expect(config.timeoutIntervalForRequest == 15)
+        #expect(config.timeoutIntervalForResource == 30)
+    }
+}
