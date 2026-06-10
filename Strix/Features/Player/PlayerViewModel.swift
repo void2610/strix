@@ -30,6 +30,10 @@ final class PlayerViewModel {
     var isAudioOnly: Bool = UserDefaults.standard.bool(forKey: "isAudioOnly") {
         didSet { UserDefaults.standard.set(isAudioOnly, forKey: "isAudioOnly") }
     }
+    /// 再生画質の上限（UserDefaults に永続化してアプリ全体で維持する）
+    var playbackQuality: PlaybackQuality = .saved {
+        didSet { UserDefaults.standard.set(playbackQuality.rawValue, forKey: PlaybackQuality.userDefaultsKey) }
+    }
     /// ループ再生が有効かどうか
     var isLooping = false
     /// 次動画を自動再生するかどうか
@@ -261,7 +265,16 @@ final class PlayerViewModel {
         }
     }
 
+    /// 画質上限を変更し、再生中のアイテムにも即時適用する（HLS は再生を止めずに切り替わる）
+    func setPlaybackQuality(_ quality: PlaybackQuality) {
+        playbackQuality = quality
+        // 音声のみモードのアイテムは固定の低ビットレートのまま変更しない
+        guard !isAudioOnly else { return }
+        player?.currentItem?.preferredPeakBitRate = quality.preferredPeakBitRate
+    }
+
     /// 再生モードに応じた AVPlayerItem を作る。
+    /// 通常モードでは画質上限設定を適用する。
     /// 音声のみモードで音声 URL が取得できなかった場合も動画をそのまま流さず、
     /// ビットレート上限を掛けて HLS の最低画質を選ばせることで通信量を抑える。
     func makePlayerItem(info: VideoInfo, audioOnly: Bool) -> AVPlayerItem {
@@ -270,10 +283,12 @@ final class PlayerViewModel {
                 return AVPlayerItem(url: audioURL)
             }
             let item = AVPlayerItem(url: info.streamURL)
-            item.preferredPeakBitRate = 300_000
+            item.preferredPeakBitRate = PlaybackQuality.dataSaver.preferredPeakBitRate
             return item
         }
-        return AVPlayerItem(url: info.streamURL)
+        let item = AVPlayerItem(url: info.streamURL)
+        item.preferredPeakBitRate = playbackQuality.preferredPeakBitRate
+        return item
     }
 
     /// 動画終端通知の監視を登録する（AVPlayerItem 単位のため、アイテム差し替え時に貼り直す）

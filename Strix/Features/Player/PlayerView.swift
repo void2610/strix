@@ -151,6 +151,16 @@ struct PlayerView: View {
                                         .background(.white.opacity(0.2), in: Capsule())
                                 }
                             }
+                            // 電波状況などの一時的なエラーから 1 タップで復帰できるようにする
+                            Button {
+                                Task { await vm.load(videoID: videoID, modelContext: modelContext) }
+                            } label: {
+                                Label("再試行", systemImage: "arrow.clockwise")
+                                    .font(.subheadline.bold())
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 10)
+                                    .background(.white.opacity(0.2), in: Capsule())
+                            }
                         }
                         .colorScheme(.dark)
                     }

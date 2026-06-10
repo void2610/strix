@@ -410,6 +410,16 @@ struct CustomPlayerView: View {
                 Label("音声のみ", systemImage: vm.isAudioOnly ? "speaker.wave.2.fill" : "video.fill")
             }
 
+            // 画質上限
+            Picker(selection: qualityBinding) {
+                ForEach(PlaybackQuality.allCases) { quality in
+                    Text(quality.displayName).tag(quality)
+                }
+            } label: {
+                Label("画質", systemImage: "slider.horizontal.3")
+            }
+            .pickerStyle(.menu)
+
             Divider()
 
             // 共有
@@ -456,6 +466,16 @@ struct CustomPlayerView: View {
             get: { vm.isAudioOnly },
             set: { _ in
                 vm.toggleAudioOnly()
+                controller.bumpFade()
+            }
+        )
+    }
+
+    private var qualityBinding: Binding<PlaybackQuality> {
+        Binding(
+            get: { vm.playbackQuality },
+            set: { quality in
+                vm.setPlaybackQuality(quality)
                 controller.bumpFade()
             }
         )

@@ -2242,3 +2242,112 @@ struct Mp4AudioStreamURLSelectionTests {
         #expect(YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams) == nil)
     }
 }
+
+// MARK: - 画質上限設定テスト
+
+struct PlaybackQualityTests {
+
+    /// 自動はビットレート無制限（0）であること
+    @Test func autoHasNoBitRateCap() {
+        #expect(PlaybackQuality.auto.preferredPeakBitRate == 0)
+    }
+
+    /// 画質が下がるほどビットレート上限も下がること
+    @Test func bitRateDecreasesWithQuality() {
+        #expect(PlaybackQuality.hd720.preferredPeakBitRate > PlaybackQuality.sd480.preferredPeakBitRate)
+        #expect(PlaybackQuality.sd480.preferredPeakBitRate > PlaybackQuality.dataSaver.preferredPeakBitRate)
+    }
+
+    /// 未保存・不正値の場合は自動にフォールバックすること
+    @Test func savedFallsBackToAuto() {
+        let original = UserDefaults.standard.string(forKey: PlaybackQuality.userDefaultsKey)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: PlaybackQuality.userDefaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: PlaybackQuality.userDefaultsKey)
+            }
+        }
+        UserDefaults.standard.set("invalid", forKey: PlaybackQuality.userDefaultsKey)
+        #expect(PlaybackQuality.saved == .auto)
+        UserDefaults.standard.set("sd480", forKey: PlaybackQuality.userDefaultsKey)
+        #expect(PlaybackQuality.saved == .sd480)
+    }
+}
+
+// MARK: - PlayerViewModel 画質適用テスト
+
+struct PlayerViewModelQualityTests {
+
+    /// UserDefaults を汚さないように画質設定を退避・復元してテストする
+    private func withCleanQualityDefaults(_ body: (PlayerViewModel) -> Void) {
+        let original = UserDefaults.standard.string(forKey: PlaybackQuality.userDefaultsKey)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: PlaybackQuality.userDefaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: PlaybackQuality.userDefaultsKey)
+            }
+        }
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+        body(vm)
+    }
+
+    private var info: VideoInfo {
+        VideoInfo(
+            streamURL: URL(string: "https://example.com/video.m3u8")!,
+            audioOnlyURL: URL(string: "https://example.com/audio.m4a")!,
+            title: "テスト動画",
+            thumbnailURL: "",
+            channelId: nil,
+            channelName: nil,
+            channelAvatarURL: nil
+        )
+    }
+
+    /// 通常モードのアイテムに画質上限が適用されること
+    @Test func makePlayerItemAppliesQualityCap() {
+        withCleanQualityDefaults { vm in
+            vm.playbackQuality = .sd480
+            let item = vm.makePlayerItem(info: info, audioOnly: false)
+            #expect(item.preferredPeakBitRate == PlaybackQuality.sd480.preferredPeakBitRate)
+        }
+    }
+
+    /// 音声のみモードのアイテムには画質設定が影響しないこと
+    @Test func audioOnlyItemIgnoresQualitySetting() {
+        withCleanQualityDefaults { vm in
+            vm.playbackQuality = .hd720
+            let item = vm.makePlayerItem(info: info, audioOnly: true)
+            #expect(item.preferredPeakBitRate == 0)
+        }
+    }
+
+    /// 画質変更が再生中のアイテムへ即時反映されること
+    @Test func setPlaybackQualityUpdatesCurrentItem() {
+        let originalAudioOnly = UserDefaults.standard.bool(forKey: "isAudioOnly")
+        defer { UserDefaults.standard.set(originalAudioOnly, forKey: "isAudioOnly") }
+        withCleanQualityDefaults { vm in
+            vm.isAudioOnly = false
+            let item = vm.makePlayerItem(info: info, audioOnly: false)
+            vm.player = AVPlayer(playerItem: item)
+            vm.setPlaybackQuality(.dataSaver)
+            #expect(item.preferredPeakBitRate == PlaybackQuality.dataSaver.preferredPeakBitRate)
+            #expect(vm.playbackQuality == .dataSaver)
+        }
+    }
+
+    /// 音声のみモード中の画質変更は再生中アイテムに影響しないこと
+    @Test func setPlaybackQualityDoesNotTouchAudioOnlyItem() {
+        let originalAudioOnly = UserDefaults.standard.bool(forKey: "isAudioOnly")
+        defer { UserDefaults.standard.set(originalAudioOnly, forKey: "isAudioOnly") }
+        withCleanQualityDefaults { vm in
+            vm.isAudioOnly = true
+            let item = vm.makePlayerItem(info: info, audioOnly: true)
+            vm.player = AVPlayer(playerItem: item)
+            vm.setPlaybackQuality(.hd720)
+            #expect(item.preferredPeakBitRate == 0)
+            #expect(vm.playbackQuality == .hd720)
+        }
+    }
+}
