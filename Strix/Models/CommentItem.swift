@@ -16,4 +16,6 @@ struct CommentItem: Identifiable {
     let publishedTimeText: String?
     let likeCountText: String?
     let replyCount: Int
+    /// 返信スレッドを読み込むための continuation token（トップレベルコメントのみ）
+    var repliesContinuation: String?
 }

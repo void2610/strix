@@ -49,15 +49,21 @@ extension ContentClient {
         return nil
     }
 
+    /// コメントスレッド1件分の情報（トップレベル commentId と返信の continuation token）
+    private struct CommentThread {
+        let commentId: String
+        let repliesContinuation: String?
+    }
+
     /// コメント取得 API レスポンスから CommentItem 配列と次ページトークンをパースする。
     /// YouTube の新形式では frameworkUpdates.entityBatchUpdate.mutations 内の
     /// commentEntityPayload からコメントデータを取得する。
     static func parseComments(from json: Any) -> (comments: [CommentItem], continuation: String?) {
         guard let dict = json as? [String: Any] else { return ([], nil) }
 
-        // commentThreadRenderer から commentId の順序を取得
-        var orderedIds: [String] = []
-        collectCommentIds(in: dict, ids: &orderedIds)
+        // commentThreadRenderer からトップレベル commentId と返信 continuation を取得
+        var threads: [CommentThread] = []
+        collectCommentThreads(in: dict, threads: &threads)
 
         // frameworkUpdates.entityBatchUpdate.mutations から commentEntityPayload を収集
         var payloadMap: [String: CommentItem] = [:]
@@ -72,16 +78,27 @@ extension ContentClient {
             }
         }
 
-        // commentThreadRenderer の順序に従ってコメントを並べる
+        let topLevelIds = Set(threads.map(\.commentId))
+
+        // commentThreadRenderer の順序に従ってトップレベルコメントのみを並べる
         var comments: [CommentItem] = []
-        for id in orderedIds {
-            if let item = payloadMap[id] {
+        for thread in threads {
+            if var item = payloadMap[thread.commentId] {
+                item.repliesContinuation = thread.repliesContinuation
                 comments.append(item)
             }
         }
-        // 順序リストにない（フォールバック用）コメントも追加
-        if comments.isEmpty {
-            comments = Array(payloadMap.values)
+
+        // フォールバック: threads が空の場合は replyCount > 0 またはすべてをトップレベル扱い
+        if comments.isEmpty && !payloadMap.isEmpty {
+            // replyCount が 0 より大きいものはトップレベルの可能性が高い
+            let candidates = payloadMap.values.filter { $0.replyCount > 0 }
+            if !candidates.isEmpty {
+                comments = candidates.sorted { $0.id < $1.id }
+            } else {
+                // 区別不能な場合はすべて表示（返信がないコメントのみの動画）
+                comments = Array(payloadMap.values)
+            }
         }
 
         // ページネーション用の continuation token
@@ -90,19 +107,104 @@ extension ContentClient {
         return (comments, nextContinuation)
     }
 
-    /// commentThreadRenderer から commentId を収集して表示順序を決定する。
-    private static func collectCommentIds(in json: Any, ids: inout [String]) {
+    /// 返信コメントをパースする（continuation token で取得した返信スレッド）。
+    static func parseReplies(from json: Any) -> (comments: [CommentItem], continuation: String?) {
+        guard let dict = json as? [String: Any] else { return ([], nil) }
+
+        // 返信の commentId を収集（commentRenderer から取得）
+        var replyIds: [String] = []
+        collectReplyIds(in: dict, ids: &replyIds)
+
+        // mutations から全コメントペイロードを収集
+        var payloadMap: [String: CommentItem] = [:]
+        if let fu = dict["frameworkUpdates"] as? [String: Any],
+           let eu = fu["entityBatchUpdate"] as? [String: Any],
+           let mutations = eu["mutations"] as? [[String: Any]] {
+            for mutation in mutations {
+                guard let payload = mutation["payload"] as? [String: Any],
+                      let cep = payload["commentEntityPayload"] as? [String: Any],
+                      let item = parseCommentEntityPayload(cep) else { continue }
+                payloadMap[item.id] = item
+            }
+        }
+
+        // replyIds の順序で返信を並べる
+        var comments: [CommentItem] = []
+        for id in replyIds {
+            if let item = payloadMap[id] {
+                comments.append(item)
+            }
+        }
+        // フォールバック: replyIds が空なら全ペイロードを返す
+        if comments.isEmpty {
+            comments = Array(payloadMap.values)
+        }
+
+        let nextContinuation = findCommentNextContinuation(in: dict)
+        return (comments, nextContinuation)
+    }
+
+    /// commentThreadRenderer からトップレベル commentId と返信 continuation token を収集する。
+    private static func collectCommentThreads(in json: Any, threads: inout [CommentThread]) {
         if let dict = json as? [String: Any] {
-            if let ctr = dict["commentThreadRenderer"] as? [String: Any],
-               let cvm = ctr["commentViewModel"] as? [String: Any],
-               let inner = cvm["commentViewModel"] as? [String: Any],
-               let commentId = inner["commentId"] as? String {
-                ids.append(commentId)
+            if let ctr = dict["commentThreadRenderer"] as? [String: Any] {
+                // commentId を取得（複数パスを試行）
+                var commentId: String?
+                if let cvm = ctr["commentViewModel"] as? [String: Any],
+                   let inner = cvm["commentViewModel"] as? [String: Any],
+                   let id = inner["commentId"] as? String {
+                    commentId = id
+                } else if let comment = ctr["comment"] as? [String: Any],
+                          let cr = comment["commentRenderer"] as? [String: Any],
+                          let id = cr["commentId"] as? String {
+                    commentId = id
+                }
+
+                // 返信 continuation token を取得
+                var repliesCont: String?
+                if let replies = ctr["replies"] as? [String: Any],
+                   let crr = replies["commentRepliesRenderer"] as? [String: Any],
+                   let contents = crr["contents"] as? [[String: Any]] {
+                    for item in contents {
+                        if let cir = item["continuationItemRenderer"] as? [String: Any],
+                           let ep = cir["continuationEndpoint"] as? [String: Any],
+                           let cmd = ep["continuationCommand"] as? [String: Any],
+                           let token = cmd["token"] as? String {
+                            repliesCont = token
+                            break
+                        }
+                    }
+                }
+
+                if let commentId {
+                    threads.append(CommentThread(commentId: commentId, repliesContinuation: repliesCont))
+                    return
+                }
+            }
+            for (_, v) in dict { collectCommentThreads(in: v, threads: &threads) }
+        } else if let array = json as? [Any] {
+            for item in array { collectCommentThreads(in: item, threads: &threads) }
+        }
+    }
+
+    /// 返信レスポンスから commentRenderer の commentId を順序通りに収集する。
+    private static func collectReplyIds(in json: Any, ids: inout [String]) {
+        if let dict = json as? [String: Any] {
+            // commentViewModel 形式
+            if let cvm = dict["commentViewModel"] as? [String: Any],
+               let id = cvm["commentId"] as? String {
+                ids.append(id)
                 return
             }
-            for (_, v) in dict { collectCommentIds(in: v, ids: &ids) }
+            // commentRenderer 形式
+            if let cr = dict["commentRenderer"] as? [String: Any],
+               let id = cr["commentId"] as? String {
+                ids.append(id)
+                return
+            }
+            for (_, v) in dict { collectReplyIds(in: v, ids: &ids) }
         } else if let array = json as? [Any] {
-            for item in array { collectCommentIds(in: item, ids: &ids) }
+            for item in array { collectReplyIds(in: item, ids: &ids) }
         }
     }
 

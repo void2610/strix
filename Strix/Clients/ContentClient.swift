@@ -202,6 +202,16 @@ extension ContentClient {
     }()
 }
 
+// MARK: - コメント返信取得
+
+extension ContentClient {
+    /// コメント返信を continuation token で取得する
+    static func fetchReplies(continuation: String) async throws -> (comments: [CommentItem], continuation: String?) {
+        let json = try await callNextAPI(params: ["continuation": continuation], cookies: "")
+        return parseReplies(from: json)
+    }
+}
+
 // MARK: - Innertube API 共通メソッド
 
 extension ContentClient {

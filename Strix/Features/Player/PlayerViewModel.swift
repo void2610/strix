@@ -47,6 +47,14 @@ final class PlayerViewModel {
     var isLoadingComments = true
     var commentsContinuation: String?
     var isLoadingMoreComments = false
+    /// 返信スレッド（キー: 親コメント ID、値: 返信コメント配列）
+    var replies: [String: [CommentItem]] = [:]
+    /// 返信読み込み中の親コメント ID
+    var loadingRepliesFor: Set<String> = []
+    /// 展開中の返信スレッドの親コメント ID
+    var expandedReplies: Set<String> = []
+    /// 返信の次ページ continuation（キー: 親コメント ID）
+    var repliesContinuation: [String: String] = [:]
     /// 現在ロード済みの動画 ID（View の .task(id:) による二重ロードを防ぐ）
     private(set) var loadedVideoID: String?
 
@@ -204,6 +212,48 @@ final class PlayerViewModel {
             strixLog("コメント次ページ取得エラー: \(error.localizedDescription)")
         }
         isLoadingMoreComments = false
+    }
+
+    /// 返信スレッドを展開/折りたたみする
+    func toggleReplies(for comment: CommentItem) async {
+        if expandedReplies.contains(comment.id) {
+            expandedReplies.remove(comment.id)
+            return
+        }
+        expandedReplies.insert(comment.id)
+        // まだ読み込んでいなければ取得する
+        if replies[comment.id] == nil {
+            await loadReplies(for: comment)
+        }
+    }
+
+    /// 返信を読み込む
+    private func loadReplies(for comment: CommentItem) async {
+        guard let token = comment.repliesContinuation else { return }
+        loadingRepliesFor.insert(comment.id)
+        do {
+            let result = try await ContentClient.fetchReplies(continuation: token)
+            replies[comment.id] = result.comments
+            repliesContinuation[comment.id] = result.continuation
+        } catch {
+            strixLog("返信取得エラー: \(error.localizedDescription)")
+        }
+        loadingRepliesFor.remove(comment.id)
+    }
+
+    /// 返信の次ページを読み込む
+    func loadMoreReplies(for commentId: String) async {
+        guard let token = repliesContinuation[commentId],
+              !loadingRepliesFor.contains(commentId) else { return }
+        loadingRepliesFor.insert(commentId)
+        do {
+            let result = try await ContentClient.fetchReplies(continuation: token)
+            replies[commentId, default: []].append(contentsOf: result.comments)
+            repliesContinuation[commentId] = result.continuation
+        } catch {
+            strixLog("返信次ページ取得エラー: \(error.localizedDescription)")
+        }
+        loadingRepliesFor.remove(commentId)
     }
 
     /// 再生速度を 1.0 → 2.0 → 1.0 の順に切り替える
