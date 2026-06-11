@@ -21,6 +21,10 @@ final class PlayerOverlayController {
 
     private var fadeTask: Task<Void, Never>?
 
+    init() {
+        scheduleFade()
+    }
+
     /// プレイヤー領域がタップされた時の挙動: 表示 ↔ 非表示をトグル
     func tapped() {
         if isVisible {

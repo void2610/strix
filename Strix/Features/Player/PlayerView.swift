@@ -423,6 +423,17 @@ struct PlayerView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(vm.comments) { comment in
                         commentRow(comment)
+
+                        // 返信展開ボタン
+                        if comment.replyCount > 0 && comment.repliesContinuation != nil {
+                            repliesToggle(for: comment)
+                        }
+
+                        // 返信スレッド
+                        if vm.expandedReplies.contains(comment.id) {
+                            repliesSection(for: comment)
+                        }
+
                         Divider()
                             .padding(.leading, 56)
                     }
@@ -459,7 +470,72 @@ struct PlayerView: View {
         .presentationDragIndicator(.visible)
     }
 
+    /// 返信展開/折りたたみボタン
+    private func repliesToggle(for comment: CommentItem) -> some View {
+        Button {
+            Task { await vm.toggleReplies(for: comment) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: vm.expandedReplies.contains(comment.id) ? "chevron.up" : "chevron.down")
+                    .font(.caption2)
+                Text(vm.expandedReplies.contains(comment.id) ? "返信を非表示" : "\(comment.replyCount)件の返信")
+                    .font(.caption)
+                    .fontWeight(.medium)
+            }
+            .foregroundStyle(.tint)
+            .padding(.leading, 56)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// 返信スレッドの表示
+    private func repliesSection(for comment: CommentItem) -> some View {
+        VStack(spacing: 0) {
+            if vm.loadingRepliesFor.contains(comment.id) && vm.replies[comment.id] == nil {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+
+            if let replyList = vm.replies[comment.id] {
+                ForEach(replyList) { reply in
+                    replyRow(reply)
+                }
+
+                // 返信の次ページ読み込み
+                if vm.repliesContinuation[comment.id] != nil {
+                    if vm.loadingRepliesFor.contains(comment.id) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    } else {
+                        Button {
+                            Task { await vm.loadMoreReplies(for: comment.id) }
+                        } label: {
+                            Text("さらに返信を表示")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.tint)
+                                .padding(.leading, 56)
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private func commentRow(_ comment: CommentItem) -> some View {
+        commentRowContent(comment, avatarSize: 32, isReply: false)
+    }
+
+    private func replyRow(_ comment: CommentItem) -> some View {
+        commentRowContent(comment, avatarSize: 24, isReply: true)
+    }
+
+    private func commentRowContent(_ comment: CommentItem, avatarSize: CGFloat, isReply: Bool) -> some View {
         HStack(alignment: .top, spacing: 10) {
             // アバター
             Group {
@@ -475,7 +551,7 @@ struct PlayerView: View {
                     commentAvatarPlaceholder
                 }
             }
-            .frame(width: 32, height: 32)
+            .frame(width: avatarSize, height: avatarSize)
             .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 4) {
@@ -493,27 +569,21 @@ struct PlayerView: View {
 
                 // コメント本文
                 Text(comment.contentText)
-                    .font(.subheadline)
+                    .font(isReply ? .caption : .subheadline)
                     .lineLimit(4)
 
-                // 高評価数・返信数
-                HStack(spacing: 12) {
-                    if let likes = comment.likeCountText, !likes.isEmpty {
-                        Label(likes, systemImage: "hand.thumbsup")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if comment.replyCount > 0 {
-                        Label("\(comment.replyCount)件の返信", systemImage: "arrowshape.turn.up.left")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                // 高評価数
+                if let likes = comment.likeCountText, !likes.isEmpty {
+                    Label(likes, systemImage: "hand.thumbsup")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
                 }
-                .padding(.top, 2)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.leading, isReply ? 56 : 14)
+        .padding(.trailing, 14)
+        .padding(.vertical, isReply ? 6 : 10)
     }
 
     private var commentAvatarPlaceholder: some View {
