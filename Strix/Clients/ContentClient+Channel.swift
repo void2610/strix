@@ -44,6 +44,8 @@ extension ContentClient {
         let bannerSources = bannerThumbs ?? pageBannerSources
         let bannerURL = ContentClient.imageURL(from: bannerSources?.last?["url"] as? String)
 
+        let subscribed = ((c4?["subscribeButton"] as? [String: Any])?["subscribeButtonRenderer"] as? [String: Any])?["subscribed"] as? Bool ?? false
+
         return ChannelInfo(
             channelId: channelId,
             name: name,
@@ -51,8 +53,19 @@ extension ContentClient {
             subscriberCount: subscriberCount,
             videoCount: videoCountText,
             avatarURL: avatarURL,
-            bannerURL: bannerURL
+            bannerURL: bannerURL,
+            subscribed: subscribed
         )
+    }
+
+    /// チャンネルを登録する（ログインアカウント）。
+    static func subscribe(channelId: String) async throws {
+        try await InnertubeRequest.performWeb(url: YouTubeConstants.subscribeURL, body: ["channelIds": [channelId]])
+    }
+
+    /// チャンネル登録を解除する。
+    static func unsubscribe(channelId: String) async throws {
+        try await InnertubeRequest.performWeb(url: YouTubeConstants.unsubscribeURL, body: ["channelIds": [channelId]])
     }
 
     /// チャンネルの特定タブを取得する（params で動画/ライブ/プレイリストを切り替え）。

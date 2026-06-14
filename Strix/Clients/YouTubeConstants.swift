@@ -17,6 +17,8 @@ enum YouTubeConstants {
     static let playerURL = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
     static let feedbackURL = URL(string: "https://www.youtube.com/youtubei/v1/feedback?prettyPrint=false")!
     static let editPlaylistURL = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!
+    static let subscribeURL = URL(string: "https://www.youtube.com/youtubei/v1/subscription/subscribe?prettyPrint=false")!
+    static let unsubscribeURL = URL(string: "https://www.youtube.com/youtubei/v1/subscription/unsubscribe?prettyPrint=false")!
 
     /// API キー付きエンドポイント（AccountClient 用）
     static let browseWithKeyURL = URL(string: "https://www.youtube.com/youtubei/v1/browse?key=\(apiKey)&prettyPrint=false")!
