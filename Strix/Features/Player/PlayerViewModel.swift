@@ -122,6 +122,7 @@ final class PlayerViewModel {
             let info = try await youtubeClient.fetchVideo(videoID)
             videoInfo = info
             let avPlayer = AVPlayer(playerItem: makePlayerItem(info: info, audioOnly: isAudioOnly))
+            StreamResourceLoader.attachPlayer(avPlayer, to: avPlayer.currentItem)
             player = avPlayer
             // PiP コントロールで再生再開すると rate が 1.0 に戻るため、
             // rateDidChangeNotification で監視して playbackRate を復元する
@@ -300,6 +301,7 @@ final class PlayerViewModel {
         let wasPlaying = player.rate != 0
 
         player.replaceCurrentItem(with: makePlayerItem(info: info, audioOnly: isAudioOnly))
+        StreamResourceLoader.attachPlayer(player, to: player.currentItem)
         // 終端監視はアイテム単位のため貼り直す
         registerEndObserver(for: player)
         if currentTime.isValid {
@@ -325,7 +327,14 @@ final class PlayerViewModel {
             item.preferredPeakBitRate = 300_000
             return item
         }
-        return AVPlayerItem(url: info.streamURL)
+        // HLS（マニフェスト）はネイティブにオンデマンド再生されるためそのまま。
+        // progressive な直 URL は全体先読みされるため ResourceLoader でページングする。
+        let s = info.streamURL.absoluteString
+        if s.contains("manifest") || s.contains(".m3u8") {
+            return AVPlayerItem(url: info.streamURL)
+        }
+        let asset = StreamResourceLoader.makeAsset(realURL: info.streamURL, userAgent: YouTubeConstants.androidVrUserAgent)
+        return AVPlayerItem(asset: asset)
     }
 
     /// 動画終端通知の監視を登録する（AVPlayerItem 単位のため、アイテム差し替え時に貼り直す）
