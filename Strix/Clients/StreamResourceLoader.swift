@@ -2,8 +2,11 @@
 //  StreamResourceLoader.swift
 //  Strix
 //
-//  adaptive ストリーム（gir=yes）は open-ended Range だと googlevideo に強くスロットリング
-//  （約 32KB/s）されるため、AVPlayer の要求を区切り付き Range に変換して代理取得する。
+//  progressive ストリーム（googlevideo の直 URL）を AVPlayer で扱うための ResourceLoader。
+//  2 つの役割を持つ:
+//   1. open-ended Range だと googlevideo に強くスロットリング（約 32KB/s）されるため、区切り付き Range に変換する。
+//   2. AVPlayer が単一 MP4 を丸ごと先読み DL してしまうため、再生位置から一定窓より先の取得を遅延（ページング）し、
+//      通信量を実際の再生分に近づける。
 //
 
 import Foundation
@@ -14,12 +17,18 @@ private var streamLoaderAssociationKey = 0
 
 final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
     private static let scheme = "strixstream"
-    /// 1 リクエストあたりの最大バイト数。open-ended を避け区切り付きにすることでスロットリングを回避する。
+    /// 1 リクエストあたりの最大バイト数。区切り付きにしてスロットリングを回避する。
     private static let chunkSize: Int64 = 2_097_152
+    /// 再生位置からこの秒数より先のチャンクは、再生が近づくまで取得を遅延する。
+    private static let prefetchWindowSeconds: Double = 60
 
     private let realURL: URL
     private let userAgent: String
     private let session = URLSession(configuration: .ephemeral)
+
+    private let lock = NSLock()
+    private weak var _player: AVPlayer?
+    private var _totalLength: Int64?
 
     private init(realURL: URL, userAgent: String) {
         self.realURL = realURL
@@ -37,6 +46,24 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
         return asset
     }
 
+    /// item にこの loader が紐づいていれば、ページング判定用の player を設定する。HLS 等の通常 item では何もしない。
+    static func attachPlayer(_ player: AVPlayer, to item: AVPlayerItem?) {
+        guard let asset = item?.asset as? AVURLAsset,
+              let loader = objc_getAssociatedObject(asset, &streamLoaderAssociationKey) as? StreamResourceLoader else { return }
+        loader.lock.lock()
+        loader._player = player
+        loader.lock.unlock()
+    }
+
+    private func snapshot() -> (AVPlayer?, Int64?) {
+        lock.lock(); defer { lock.unlock() }
+        return (_player, _totalLength)
+    }
+
+    private func setTotalLength(_ total: Int64) {
+        lock.lock(); _totalLength = total; lock.unlock()
+    }
+
     func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
                         shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
         Task { await handle(loadingRequest) }
@@ -49,7 +76,9 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
             return
         }
         let start = dataRequest.requestedOffset
-        // チャンク上限で区切ることで open-ended のスロットリングを避ける
+        await waitUntilWithinWindow(offset: start, loadingRequest: loadingRequest)
+        if loadingRequest.isCancelled { return }
+
         let end = start + min(Int64(dataRequest.requestedLength), Self.chunkSize) - 1
         var request = URLRequest(url: realURL)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -71,6 +100,7 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
                    let totalStr = contentRange.components(separatedBy: "/").last,
                    let total = Int64(totalStr) {
                     info.contentLength = total
+                    setTotalLength(total)
                 } else {
                     info.contentLength = http.expectedContentLength
                 }
@@ -79,6 +109,20 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
             loadingRequest.finishLoading()
         } catch {
             loadingRequest.finishLoading(with: error)
+        }
+    }
+
+    /// 再生位置から prefetchWindowSeconds より先のチャンクは、再生が近づくまで取得を遅延する。
+    /// player/長さ/再生時間が不明な間（再生開始直後など）はページングせず即取得する。
+    private func waitUntilWithinWindow(offset: Int64, loadingRequest: AVAssetResourceLoadingRequest) async {
+        while !loadingRequest.isCancelled {
+            let (player, total) = snapshot()
+            guard let player, let total, total > 0,
+                  let duration = player.currentItem?.duration.seconds, duration.isFinite, duration > 0 else { return }
+            let bytesPerSecond = Double(total) / duration
+            let playedBytes = player.currentTime().seconds * bytesPerSecond
+            if Double(offset) <= playedBytes + Self.prefetchWindowSeconds * bytesPerSecond { return }
+            try? await Task.sleep(for: .milliseconds(400))
         }
     }
 }
