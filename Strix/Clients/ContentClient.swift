@@ -26,6 +26,8 @@ struct ChannelInfo {
     let videoCount: String?
     let avatarURL: URL?
     let bannerURL: URL?
+    /// ログインアカウントで登録済みか
+    var subscribed: Bool = false
 }
 
 /// チャンネルプレイリスト項目

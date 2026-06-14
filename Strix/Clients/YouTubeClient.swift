@@ -212,7 +212,10 @@ extension YouTubeClient {
     /// ANDROID_VR クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画でも
     /// itag18（360p muxed、音声込みの単一 progressive URL）を含む再生可能な直 URL を返す。
     private static func fetchWithAndroidVR(videoID: String) async throws -> VideoInfo {
+        // 視聴履歴をアカウントに記録するため、認証付き WEB のトラッキング URL を並行取得する
+        async let accountTracking = fetchAccountTrackingURLs(videoID: videoID)
         guard let visitorData = await fetchVisitorData() else {
+            _ = await accountTracking
             throw YouTubeClientError.streamNotFound
         }
         var request = URLRequest(url: YouTubeConstants.playerURL)
@@ -240,11 +243,14 @@ extension YouTubeClient {
         guard let muxed = formats.first(where: { $0["itag"] as? Int == 18 }),
               let urlStr = muxed["url"] as? String,
               let streamURL = URL(string: urlStr) else {
+            _ = await accountTracking
             throw YouTubeClientError.streamNotFound
         }
+        // android_vr 自身のトラッキングはアカウント非紐付けのため、認証付き WEB のものを使う
+        let tracking = await accountTracking ?? meta.trackingURLs
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
-                         playbackTrackingURLs: meta.trackingURLs)
+                         playbackTrackingURLs: tracking)
     }
 
     // MARK: - WEB クライアント（Cookie 認証、combined formats を返す）
@@ -408,18 +414,25 @@ extension YouTubeClient {
             audioOnlyURL = selectAudioOnlyURL(from: adaptiveFormats)
         }
 
-        // 再生トラッキング URL を抽出
-        var trackingURLs: PlaybackTrackingURLs? = nil
-        if let tracking = json["playbackTracking"] as? [String: Any],
-           let playbackURL = (tracking["videostatsPlaybackUrl"] as? [String: Any])?["baseUrl"] as? String,
-           let watchtimeURL = (tracking["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String {
-            trackingURLs = PlaybackTrackingURLs(
-                videostatsPlaybackURL: playbackURL,
-                videostatsWatchtimeURL: watchtimeURL
-            )
-        }
+        return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL, extractTrackingURLs(from: json))
+    }
 
-        return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL, trackingURLs)
+    /// /player レスポンスから視聴トラッキング URL を抽出する。
+    static func extractTrackingURLs(from json: [String: Any]) -> PlaybackTrackingURLs? {
+        guard let tracking = json["playbackTracking"] as? [String: Any],
+              let playbackURL = (tracking["videostatsPlaybackUrl"] as? [String: Any])?["baseUrl"] as? String,
+              let watchtimeURL = (tracking["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String else {
+            return nil
+        }
+        return PlaybackTrackingURLs(videostatsPlaybackURL: playbackURL, videostatsWatchtimeURL: watchtimeURL)
+    }
+
+    /// 視聴履歴用のトラッキング URL を認証付き WEB クライアントから取得する。
+    /// android_vr 等の非認証クライアントのトラッキングはログインアカウントに紐づかないため、これを使う。
+    static func fetchAccountTrackingURLs(videoID: String) async -> PlaybackTrackingURLs? {
+        let body: [String: Any] = ["videoId": videoID, "contentCheckOk": true, "racyCheckOk": true]
+        guard let json = try? await InnertubeRequest.fetchWeb(url: YouTubeConstants.playerURL, body: body) else { return nil }
+        return extractTrackingURLs(from: json)
     }
 
     /// adaptiveFormats から音声のみモードで使う URL を選ぶ。
