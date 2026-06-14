@@ -15,6 +15,7 @@ struct YouTubeClient {
 }
 
 struct VideoInfo {
+    /// 主ストリーム URL（HLS = 音声込みの完結ストリーム）
     let streamURL: URL
     /// 音声のみストリーム URL（adaptive formats から取得、nil なら通常のみ）
     let audioOnlyURL: URL?
@@ -61,6 +62,7 @@ extension YouTubeClient {
             // 成功・失敗・呼び出し側キャンセルのいずれで抜けても並列の WEB リクエストを確実に止める
             defer { webTask.cancel() }
 
+            // IOS は HLS（音声込み・ABR）を返すため最優先。SABR 移行済み動画では HLS が無く失敗する。
             do {
                 var info = try await fetchWithIOS(videoID: videoID)
                 strixLog("player[IOS] 成功")
@@ -79,6 +81,24 @@ extension YouTubeClient {
             } catch {
                 strixLog("player[IOS] 失敗: \(error.localizedDescription)")
                 // 呼び出し側のキャンセルならフォールバックせず即終了する
+                try Task.checkCancellation()
+            }
+
+            // ANDROID_VR は PO Token 不要で、SABR 移行済み動画でも再生可能な直 URL（itag18 muxed）を返す
+            do {
+                var info = try await fetchWithAndroidVR(videoID: videoID)
+                strixLog("player[ANDROID_VR] 成功")
+                if info.playbackTrackingURLs == nil {
+                    let deadline = Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        webTask.cancel()
+                    }
+                    info.playbackTrackingURLs = (try? await webTask.value)?.playbackTrackingURLs
+                    deadline.cancel()
+                }
+                return info
+            } catch {
+                strixLog("player[ANDROID_VR] 失敗: \(error.localizedDescription)")
                 try Task.checkCancellation()
             }
 
@@ -135,13 +155,76 @@ extension YouTubeClient {
         let json = try await sendPlayerRequest(request)
         let meta = extractVideoMeta(from: json, videoID: videoID)
 
-        // HLS manifest URL
+        // HLS manifest URL（音声込みの完結ストリーム）。
+        // SABR 移行済みで hlsManifestUrl が返らない動画は、ANDROID_VR フォールバックへ回す。
         let streamingData = json["streamingData"] as? [String: Any]
         guard let hlsString = streamingData?["hlsManifestUrl"] as? String,
               let streamURL = URL(string: hlsString) else {
             throw YouTubeClientError.streamNotFound
         }
+        return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
+                         channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
+                         playbackTrackingURLs: meta.trackingURLs)
+    }
 
+    // MARK: - ANDROID_VR クライアント（PO Token 不要、再生可能な直 URL を返す）
+
+    /// セッションで使い回す visitorData（android_vr は visitorData が無いと LOGIN_REQUIRED になる）
+    private static var cachedVisitorData: String?
+
+    /// visitorData を取得する。IOS クライアントのレスポンスに含まれるものを使い、セッション内でキャッシュする。
+    private static func fetchVisitorData() async -> String? {
+        if let cachedVisitorData { return cachedVisitorData }
+        var request = URLRequest(url: YouTubeConstants.playerURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(YouTubeConstants.iosUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(YouTubeConstants.iosClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(YouTubeConstants.iosClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
+        let body: [String: Any] = ["videoId": "dQw4w9WgXcQ", "context": YouTubeConstants.iosClientContext]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (data, _) = try? await InnertubeRequest.session.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let vd = (json["responseContext"] as? [String: Any])?["visitorData"] as? String else {
+            return nil
+        }
+        cachedVisitorData = vd
+        return vd
+    }
+
+    /// ANDROID_VR クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画でも
+    /// itag18（360p muxed、音声込みの単一 progressive URL）を含む再生可能な直 URL を返す。
+    private static func fetchWithAndroidVR(videoID: String) async throws -> VideoInfo {
+        guard let visitorData = await fetchVisitorData() else {
+            throw YouTubeClientError.streamNotFound
+        }
+        var request = URLRequest(url: YouTubeConstants.playerURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(YouTubeConstants.androidVrUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(YouTubeConstants.androidVrClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(YouTubeConstants.androidVrClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue(visitorData, forHTTPHeaderField: "X-Goog-Visitor-Id")
+
+        let body: [String: Any] = [
+            "videoId": videoID,
+            "contentCheckOk": true,
+            "racyCheckOk": true,
+            "context": YouTubeConstants.androidVrClientContext(visitorData: visitorData)
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let json = try await sendPlayerRequest(request)
+        let meta = extractVideoMeta(from: json, videoID: videoID)
+
+        // itag18（音声込み muxed）を優先。SABR と異なり通常の Range GET で再生できる。
+        let streamingData = json["streamingData"] as? [String: Any]
+        let formats = (streamingData?["formats"] as? [[String: Any]]) ?? []
+        guard let muxed = formats.first(where: { $0["itag"] as? Int == 18 }),
+              let urlStr = muxed["url"] as? String,
+              let streamURL = URL(string: urlStr) else {
+            throw YouTubeClientError.streamNotFound
+        }
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
                          playbackTrackingURLs: meta.trackingURLs)

@@ -576,6 +576,26 @@ struct YouTubeClientTests {
         #expect(info.streamURL.absoluteString.contains("googlevideo") ||
                 info.streamURL.absoluteString.contains("manifest"))
     }
+
+    /// SABR 移行済み動画でも、チェーン（android_vr フォールバック）が再生可能な直 URL を返すことを検証する。
+    @Test func sabrVideoReturnsPlayableStream() async throws {
+        let info = try await YouTubeClient.live.fetchVideo("9bZkp7q19f0")
+        let s = info.streamURL.absoluteString
+        #expect(s.contains("googlevideo") || s.contains("manifest"),
+                "再生可能なストリーム URL でない: \(s.prefix(80))")
+    }
+
+    /// 実ネットワークで取得した HLS ストリームが再生準備可能（asset の長さが取得できる）なこと。
+    /// 未認証ではボット検出を避けるためスキップ。
+    @MainActor
+    @Test func makePlayerItemProducesPlayableAsset() async throws {
+        guard AuthState.shared.cookieString != nil else { return }
+        let info = try await YouTubeClient.live.fetchVideo(testVideoID)
+        let vm = PlayerViewModel(youtubeClient: .live, contentClient: .mock())
+        let item = vm.makePlayerItem(info: info, audioOnly: false)
+        let duration = try await item.asset.load(.duration)
+        #expect(duration.seconds > 0)
+    }
 }
 
 // MARK: - ContentClient 結合テスト

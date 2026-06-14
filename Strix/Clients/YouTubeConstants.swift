@@ -42,6 +42,13 @@ enum YouTubeConstants {
     static let iosOSVersion = "18.4.0"
     static let iosUserAgent = "com.google.ios.youtube/\(iosClientVersion) (\(iosDeviceModel); U; CPU iOS 18_4 like Mac OS X;)"
 
+    // MARK: - ANDROID_VR クライアント（PO Token 不要・visitorData 必須、再生可能な直 URL を返す）
+
+    static let androidVrClientName = "ANDROID_VR"
+    static let androidVrClientVersion = "1.65.10"
+    static let androidVrClientNameValue = "28"
+    static let androidVrUserAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+
     // MARK: - ロケール
 
     static let language = "ja"
@@ -75,6 +82,22 @@ enum YouTubeConstants {
             "osVersion": iosOSVersion,
             "hl": language,
             "gl": region
+        ]]
+    }
+
+    /// ANDROID_VR クライアントの context 辞書を返す（visitorData は呼び出し側で付与）
+    static func androidVrClientContext(visitorData: String) -> [String: Any] {
+        ["client": [
+            "clientName": androidVrClientName,
+            "clientVersion": androidVrClientVersion,
+            "deviceMake": "Oculus",
+            "deviceModel": "Quest 3",
+            "androidSdkVersion": 32,
+            "osName": "Android",
+            "osVersion": "12L",
+            "hl": language,
+            "gl": region,
+            "visitorData": visitorData
         ]]
     }
 }
