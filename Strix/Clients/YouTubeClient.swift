@@ -169,27 +169,44 @@ extension YouTubeClient {
 
     // MARK: - ANDROID_VR クライアント（PO Token 不要、再生可能な直 URL を返す）
 
-    /// セッションで使い回す visitorData（android_vr は visitorData が無いと LOGIN_REQUIRED になる）
-    private static var cachedVisitorData: String?
+    /// セッションで使い回す visitorData をスレッドセーフにキャッシュする。
+    /// 同時呼び出し時の data race を防ぎ、フェッチも 1 本に重複排除する。
+    private actor VisitorDataCache {
+        private var cached: String?
+        private var inFlight: Task<String?, Never>?
+
+        func resolve(fetch: @Sendable @escaping () async -> String?) async -> String? {
+            if let cached { return cached }
+            if let inFlight { return await inFlight.value }
+            let task = Task { await fetch() }
+            inFlight = task
+            let value = await task.value
+            inFlight = nil
+            if let value { cached = value }
+            return value
+        }
+    }
+
+    private static let visitorDataCache = VisitorDataCache()
 
     /// visitorData を取得する。IOS クライアントのレスポンスに含まれるものを使い、セッション内でキャッシュする。
     private static func fetchVisitorData() async -> String? {
-        if let cachedVisitorData { return cachedVisitorData }
-        var request = URLRequest(url: YouTubeConstants.playerURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(YouTubeConstants.iosUserAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue(YouTubeConstants.iosClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue(YouTubeConstants.iosClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
-        let body: [String: Any] = ["videoId": "dQw4w9WgXcQ", "context": YouTubeConstants.iosClientContext]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, _) = try? await InnertubeRequest.session.data(for: request),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let vd = (json["responseContext"] as? [String: Any])?["visitorData"] as? String else {
-            return nil
+        await visitorDataCache.resolve {
+            var request = URLRequest(url: YouTubeConstants.playerURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(YouTubeConstants.iosUserAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(YouTubeConstants.iosClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
+            request.setValue(YouTubeConstants.iosClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
+            let body: [String: Any] = ["videoId": "dQw4w9WgXcQ", "context": YouTubeConstants.iosClientContext]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            guard let (data, _) = try? await InnertubeRequest.session.data(for: request),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let vd = (json["responseContext"] as? [String: Any])?["visitorData"] as? String else {
+                return nil
+            }
+            return vd
         }
-        cachedVisitorData = vd
-        return vd
     }
 
     /// ANDROID_VR クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画でも
