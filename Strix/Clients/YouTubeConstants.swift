@@ -47,7 +47,7 @@ enum YouTubeConstants {
     static let androidVrClientName = "ANDROID_VR"
     static let androidVrClientVersion = "1.65.10"
     static let androidVrClientNameValue = "28"
-    static let androidVrUserAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+    static let androidVrUserAgent = "com.google.android.apps.youtube.vr.oculus/\(androidVrClientVersion) (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
 
     // MARK: - ロケール
 
