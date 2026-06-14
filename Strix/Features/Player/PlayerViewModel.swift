@@ -317,7 +317,9 @@ final class PlayerViewModel {
     func makePlayerItem(info: VideoInfo, audioOnly: Bool) -> AVPlayerItem {
         if audioOnly {
             if let audioURL = info.audioOnlyURL {
-                return AVPlayerItem(url: audioURL)
+                // adaptive 音声は open-ended Range だとスロットリングされるため区切り付きで取得する
+                let asset = StreamResourceLoader.makeAsset(realURL: audioURL, userAgent: YouTubeConstants.androidVrUserAgent)
+                return AVPlayerItem(asset: asset)
             }
             let item = AVPlayerItem(url: info.streamURL)
             item.preferredPeakBitRate = 300_000
