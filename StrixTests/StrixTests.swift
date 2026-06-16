@@ -547,6 +547,38 @@ struct ChannelViewModelTests {
         #expect(vm.error != nil)
         #expect(!vm.isLoading)
     }
+
+    private static func makeInfo(subscribed: Bool) -> ChannelInfo {
+        ChannelInfo(channelId: "UC123", name: "テストチャンネル", handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil, subscribed: subscribed)
+    }
+
+    @Test func toggleSubscriptionSuccessKeepsNewState() async {
+        let client = ContentClient.mock(
+            fetchChannel: { _ in Self.makeInfo(subscribed: false) },
+            subscribe: { _ in }
+        )
+        let vm = ChannelViewModel(contentClient: client)
+        await vm.load(channelId: "UC123")
+
+        await vm.toggleSubscription()
+
+        #expect(vm.channelInfo?.subscribed == true)
+        #expect(!vm.isTogglingSubscription)
+    }
+
+    @Test func toggleSubscriptionFailureRollsBack() async {
+        let client = ContentClient.mock(
+            fetchChannel: { _ in Self.makeInfo(subscribed: false) },
+            subscribe: { _ in throw URLError(.notConnectedToInternet) }
+        )
+        let vm = ChannelViewModel(contentClient: client)
+        await vm.load(channelId: "UC123")
+
+        await vm.toggleSubscription()
+
+        #expect(vm.channelInfo?.subscribed == false)
+        #expect(!vm.isTogglingSubscription)
+    }
 }
 
 // MARK: - ContentClient 結合テスト (fetchHistoryVideos)
