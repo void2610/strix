@@ -58,16 +58,6 @@ extension ContentClient {
         )
     }
 
-    /// チャンネルを登録する（ログインアカウント）。
-    static func subscribe(channelId: String) async throws {
-        try await InnertubeRequest.performWeb(url: YouTubeConstants.subscribeURL, body: ["channelIds": [channelId]])
-    }
-
-    /// チャンネル登録を解除する。
-    static func unsubscribe(channelId: String) async throws {
-        try await InnertubeRequest.performWeb(url: YouTubeConstants.unsubscribeURL, body: ["channelIds": [channelId]])
-    }
-
     /// チャンネルの特定タブを取得する（params で動画/ライブ/プレイリストを切り替え）。
     static func fetchChannelTabViaInnertube(channelId: String, params: String?, cookies: String) async throws -> ([VideoItem], String?) {
         let json = try await callBrowseAPI(browseId: channelId, params: params, cookies: cookies)

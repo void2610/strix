@@ -52,6 +52,10 @@ struct ContentClient {
     /// 関連動画・動画オーナーアバター・説明欄データを返す
     var fetchRelated: (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?)
     var fetchChannel: (String) async throws -> ChannelInfo
+    /// チャンネルを登録する
+    var subscribe: (_ channelId: String) async throws -> Void
+    /// チャンネル登録を解除する
+    var unsubscribe: (_ channelId: String) async throws -> Void
     /// チャンネルタブの動画を取得（初回）
     var fetchChannelTab: (_ channelId: String, _ tab: ChannelTab) async throws -> ([VideoItem], String?)
     /// チャンネルタブのページネーション
@@ -76,13 +80,15 @@ extension ContentClient {
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?) = { _ in ([], nil, nil, nil, nil) },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
+        subscribe: @escaping (String) async throws -> Void = { _ in },
+        unsubscribe: @escaping (String) async throws -> Void = { _ in },
         fetchChannelTab: @escaping (String, ChannelTab) async throws -> ([VideoItem], String?) = { _, _ in ([], nil) },
         fetchChannelTabPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         fetchChannelPlaylists: @escaping (String) async throws -> [ChannelPlaylistItem] = { _ in [] },
         fetchComments: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) },
         fetchCommentsPage: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
     }
 }
 
@@ -160,6 +166,12 @@ extension ContentClient {
             fetchChannel: { channelId in
                 let cookies = ""
                 return try await ContentClient.fetchChannelViaInnertube(channelId: channelId, cookies: cookies)
+            },
+            subscribe: { channelId in
+                try await InnertubeRequest.performWeb(url: YouTubeConstants.subscribeURL, body: ["channelIds": [channelId]])
+            },
+            unsubscribe: { channelId in
+                try await InnertubeRequest.performWeb(url: YouTubeConstants.unsubscribeURL, body: ["channelIds": [channelId]])
             },
             fetchChannelTab: { channelId, tab in
                 let cookies = ""
