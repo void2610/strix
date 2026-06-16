@@ -22,6 +22,7 @@ final class ChannelViewModel {
     var isLoading = true
     var isLoadingTab = false
     var isLoadingMore = false
+    var isTogglingSubscription = false
     var error: String?
 
     private let contentClient: ContentClient
@@ -92,14 +93,16 @@ final class ChannelViewModel {
 
     /// チャンネル登録 ↔ 解除を切り替える（楽観的更新、失敗時はロールバック）
     func toggleSubscription() async {
-        guard let info = channelInfo else { return }
+        guard let info = channelInfo, !isTogglingSubscription else { return }
+        isTogglingSubscription = true
+        defer { isTogglingSubscription = false }
         let newState = !info.subscribed
         channelInfo?.subscribed = newState
         do {
             if newState {
-                try await ContentClient.subscribe(channelId: info.channelId)
+                try await contentClient.subscribe(info.channelId)
             } else {
-                try await ContentClient.unsubscribe(channelId: info.channelId)
+                try await contentClient.unsubscribe(info.channelId)
             }
         } catch {
             strixLog("チャンネル登録切替エラー: \(error.localizedDescription)")
@@ -418,5 +421,6 @@ struct ChannelView: View {
                 .background(info.subscribed ? Color(.secondarySystemBackground) : Color.red, in: Capsule())
         }
         .buttonStyle(.plain)
+        .disabled(vm.isTogglingSubscription)
     }
 }
