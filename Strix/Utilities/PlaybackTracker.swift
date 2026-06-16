@@ -21,6 +21,8 @@ final class PlaybackTracker {
     private var cpn: String = ""
     private var lastReportedTime: Double = 0
     private var hasSentPlayback = false
+    /// 再生トラッキング開始時刻（ping の rt=経過実時間 算出用）
+    private var startDate = Date()
 
     private let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -37,6 +39,7 @@ final class PlaybackTracker {
         self.cpn = Self.generateCPN()
         self.lastReportedTime = 0
         self.hasSentPlayback = false
+        self.startDate = Date()
 
         guard trackingURLs != nil else {
             strixLog("tracking: URL なし、スキップ")
@@ -45,6 +48,11 @@ final class PlaybackTracker {
 
         // 再生開始レポート
         sendPlaybackStart()
+
+        // 公式クライアントに倣い開始直後にも watchtime を送る（視聴確定のため）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.sendWatchtime()
+        }
 
         // 30 秒ごとに watchtime を報告
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -76,6 +84,7 @@ final class PlaybackTracker {
         let duration = item.duration.isNumeric ? item.duration.seconds : 0
 
         var urlString = urls.videostatsPlaybackURL
+        urlString = Self.appendParam(urlString, "ver", "2")
         urlString = Self.appendParam(urlString, "cpn", cpn)
         urlString = Self.appendParam(urlString, "cmt", String(format: "%.3f", currentTime))
         urlString = Self.appendParam(urlString, "len", String(format: "%.0f", duration))
@@ -93,11 +102,16 @@ final class PlaybackTracker {
         let duration = item.duration.isNumeric ? item.duration.seconds : 0
         guard currentTime > 0 else { return }
 
+        let rt = max(0, Date().timeIntervalSince(startDate))
+
         var urlString = urls.videostatsWatchtimeURL
+        urlString = Self.appendParam(urlString, "ver", "2")
         urlString = Self.appendParam(urlString, "cpn", cpn)
         urlString = Self.appendParam(urlString, "st", String(format: "%.3f", lastReportedTime))
         urlString = Self.appendParam(urlString, "et", String(format: "%.3f", currentTime))
         urlString = Self.appendParam(urlString, "cmt", String(format: "%.3f", currentTime))
+        urlString = Self.appendParam(urlString, "rt", String(format: "%.0f", rt))
+        urlString = Self.appendParam(urlString, "state", "playing")
         urlString = Self.appendParam(urlString, "len", String(format: "%.0f", duration))
 
         sendRequest(urlString: urlString, label: "watchtime")
@@ -118,14 +132,10 @@ final class PlaybackTracker {
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
             forHTTPHeaderField: "User-Agent"
         )
-        // Cookie 認証を付与
-        if let cookies = AuthState.shared.cookieString, !cookies.isEmpty {
-            let deduped = ContentClient.deduplicateCookies(cookies)
-            request.setValue(deduped, forHTTPHeaderField: "Cookie")
-            if let auth = ContentClient.buildSapisidHash(from: deduped) {
-                request.setValue(auth, forHTTPHeaderField: "Authorization")
-            }
-        }
+        // Cookie + SAPISIDHASH + X-Origin/X-Goog-AuthUser を付与
+        ContentClient.applyAuth(to: &request)
+        // SAPISIDHASH は origin を含めて計算されるため、サーバ検証用に Origin も必須
+        request.setValue(YouTubeConstants.origin, forHTTPHeaderField: "Origin")
 
         Task {
             do {

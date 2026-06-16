@@ -44,6 +44,8 @@ extension ContentClient {
         let bannerSources = bannerThumbs ?? pageBannerSources
         let bannerURL = ContentClient.imageURL(from: bannerSources?.last?["url"] as? String)
 
+        let subscribed = ((c4?["subscribeButton"] as? [String: Any])?["subscribeButtonRenderer"] as? [String: Any])?["subscribed"] as? Bool ?? false
+
         return ChannelInfo(
             channelId: channelId,
             name: name,
@@ -51,7 +53,8 @@ extension ContentClient {
             subscriberCount: subscriberCount,
             videoCount: videoCountText,
             avatarURL: avatarURL,
-            bannerURL: bannerURL
+            bannerURL: bannerURL,
+            subscribed: subscribed
         )
     }
 

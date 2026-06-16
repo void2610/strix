@@ -22,6 +22,7 @@ final class ChannelViewModel {
     var isLoading = true
     var isLoadingTab = false
     var isLoadingMore = false
+    var isTogglingSubscription = false
     var error: String?
 
     private let contentClient: ContentClient
@@ -88,6 +89,25 @@ final class ChannelViewModel {
             tabContinuations[selectedTab] = nil
         }
         isLoadingMore = false
+    }
+
+    /// チャンネル登録 ↔ 解除を切り替える（楽観的更新、失敗時はロールバック）
+    func toggleSubscription() async {
+        guard let info = channelInfo, !isTogglingSubscription else { return }
+        isTogglingSubscription = true
+        defer { isTogglingSubscription = false }
+        let newState = !info.subscribed
+        channelInfo?.subscribed = newState
+        do {
+            if newState {
+                try await contentClient.subscribe(info.channelId)
+            } else {
+                try await contentClient.unsubscribe(info.channelId)
+            }
+        } catch {
+            strixLog("チャンネル登録切替エラー: \(error.localizedDescription)")
+            channelInfo?.subscribed = !newState
+        }
     }
 
     /// 現在のタブの動画リスト
@@ -378,11 +398,29 @@ struct ChannelView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
+
+                subscribeButton(info: info)
+                    .padding(.top, 4)
             }
 
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private func subscribeButton(info: ChannelInfo) -> some View {
+        Button {
+            Task { await vm.toggleSubscription() }
+        } label: {
+            Text(info.subscribed ? "登録済み" : "登録")
+                .font(.subheadline.bold())
+                .padding(.horizontal, 16)
+                .padding(.vertical, 7)
+                .foregroundStyle(info.subscribed ? Color.primary : Color.white)
+                .background(info.subscribed ? Color(.secondarySystemBackground) : Color.red, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.isTogglingSubscription)
     }
 }
