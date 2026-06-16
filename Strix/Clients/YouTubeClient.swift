@@ -430,6 +430,8 @@ extension YouTubeClient {
     /// 視聴履歴用のトラッキング URL を認証付き WEB クライアントから取得する。
     /// android_vr 等の非認証クライアントのトラッキングはログインアカウントに紐づかないため、これを使う。
     static func fetchAccountTrackingURLs(videoID: String) async -> PlaybackTrackingURLs? {
+        // 未サインインでは取得しても再生統計をアカウントに紐づけられないため /player を打たない
+        guard AuthState.shared.isSignedIn else { return nil }
         let body: [String: Any] = ["videoId": videoID, "contentCheckOk": true, "racyCheckOk": true]
         guard let json = try? await InnertubeRequest.fetchWeb(url: YouTubeConstants.playerURL, body: body) else { return nil }
         return extractTrackingURLs(from: json)
