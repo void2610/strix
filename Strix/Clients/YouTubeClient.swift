@@ -418,7 +418,7 @@ extension YouTubeClient {
     }
 
     /// /player レスポンスから視聴トラッキング URL を抽出する。
-    static func extractTrackingURLs(from json: [String: Any]) -> PlaybackTrackingURLs? {
+    private static func extractTrackingURLs(from json: [String: Any]) -> PlaybackTrackingURLs? {
         guard let tracking = json["playbackTracking"] as? [String: Any],
               let playbackURL = (tracking["videostatsPlaybackUrl"] as? [String: Any])?["baseUrl"] as? String,
               let watchtimeURL = (tracking["videostatsWatchtimeUrl"] as? [String: Any])?["baseUrl"] as? String else {
