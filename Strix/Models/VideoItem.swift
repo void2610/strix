@@ -12,7 +12,7 @@ import YouTubeKit
 
 /// ホーム・検索・関連動画で共通して使う軽量動画モデル。
 /// YTVideo（YouTubeKit）と Innertube 直叩きレスポンスの両方をここに統一する。
-struct VideoItem: Identifiable {
+struct VideoItem: Identifiable, Equatable {
     var id: String { videoId }
     let videoId: String
     let title: String
