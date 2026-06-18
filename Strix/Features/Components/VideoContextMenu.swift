@@ -17,6 +17,8 @@ struct VideoContextMenu: View {
     /// 「プレイリストから削除」実行アクション（setVideoId を持ち、かつ注入された場合のみ表示）
     var onRemoveFromPlaylist: (() -> Void)? = nil
 
+    @Environment(PlayerCoordinator.self) private var coordinator
+
     var body: some View {
         // 興味なし（HomeView のおすすめ等 feedbackTokens がある動画でのみ表示）
         if let onDismiss, !video.feedbackTokens.isEmpty {
@@ -43,6 +45,21 @@ struct VideoContextMenu: View {
         }
 
         Divider()
+
+        // 再生リスト（プレイリスト）行はキュー操作の対象外
+        if video.playlistId == nil {
+            Button {
+                coordinator.playNext(video)
+            } label: {
+                Label("次に再生", systemImage: "text.insert")
+            }
+
+            Button {
+                coordinator.enqueue(video)
+            } label: {
+                Label("キューに追加", systemImage: "text.append")
+            }
+        }
 
         Button {
             Task { try? await ContentClient.addToWatchLater(videoId: video.videoId) }

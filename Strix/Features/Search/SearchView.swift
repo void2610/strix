@@ -139,7 +139,7 @@ struct SearchView: View {
     private var resultsList: some View {
         List(vm.results) { video in
             Button {
-                playerCoordinator.play(videoID: video.videoId)
+                playerCoordinator.play(video)
             } label: {
                 VideoRowView(video: video)
                     .padding(.vertical, 4)
