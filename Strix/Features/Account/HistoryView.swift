@@ -84,7 +84,7 @@ struct HistoryView: View {
                         VideoRowView(video: video)
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                playerCoordinator.play(videoID: video.videoId)
+                                playerCoordinator.play(video)
                             }
                             .contextMenu {
                                 VideoContextMenu(video: video)

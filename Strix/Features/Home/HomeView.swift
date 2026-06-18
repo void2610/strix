@@ -245,7 +245,7 @@ struct HomeView: View {
                         .buttonStyle(.plain)
                     } else {
                         Button {
-                            playerCoordinator.play(videoID: video.videoId)
+                            playerCoordinator.play(video)
                         } label: {
                             VideoCardView(video: video)
                         }

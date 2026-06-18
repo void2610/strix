@@ -48,6 +48,13 @@ struct PlayerContainerView: View {
                 vm.playlistIndex = coordinator.initialIndex
             }
             await vm.load(videoID: videoID, modelContext: modelContext)
+            // 手動キューの種化に使えるよう、ロード完了後の動画を coordinator に反映する
+            coordinator.currentVideoItem = vm.currentVideoItem ?? coordinator.currentVideoItem
+        }
+        .onChange(of: coordinator.playlistQueue) { _, queue in
+            // 再生中にキューが編集された場合に VM 側へ同期する（同一動画なら再ロードは起きない）
+            vm.playlistQueue = queue
+            vm.playlistIndex = coordinator.initialIndex
         }
         .onChange(of: coordinator.mode) { _, newMode in
             if newMode == .hidden { dismissPlayer() }
