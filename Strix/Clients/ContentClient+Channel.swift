@@ -61,23 +61,27 @@ extension ContentClient {
     }
 
     /// header 配下から登録状態を再帰探索する。
-    /// 旧 c4TabbedHeaderRenderer は `subscribeButtonRenderer.subscribed`、
-    /// 新 pageHeaderRenderer は `subscribeButtonViewModel.subscribed` に持つ。
-    /// header スコープに限定するため、関連チャンネル棚(gridChannelRenderer)の状態を誤検出しない。
-    static func extractSubscribedState(from any: Any?) -> Bool? {
+    /// 旧 c4TabbedHeaderRenderer は `subscribeButtonRenderer`、新 pageHeaderRenderer は
+    /// `subscribeButtonViewModel` に登録状態を持つ。これらのサブツリーに入って初めて
+    /// `subscribed` を採用することで、subscribe ボタンと無関係な `subscribed` の誤検出を防ぐ。
+    static func extractSubscribedState(from any: Any?, insideSubscribeButton: Bool = false) -> Bool? {
         if let dict = any as? [String: Any] {
-            for key in ["subscribeButtonRenderer", "subscribeButtonViewModel"] {
-                if let button = dict[key] as? [String: Any], let subscribed = button["subscribed"] as? Bool {
-                    return subscribed
-                }
+            if insideSubscribeButton, let subscribed = dict["subscribed"] as? Bool {
+                return subscribed
             }
-            if let subscribed = dict["subscribed"] as? Bool { return subscribed }
-            for (_, value) in dict {
-                if let found = extractSubscribedState(from: value) { return found }
+            for (key, value) in dict {
+                let nowInside = insideSubscribeButton
+                    || key == "subscribeButtonRenderer"
+                    || key == "subscribeButtonViewModel"
+                if let found = extractSubscribedState(from: value, insideSubscribeButton: nowInside) {
+                    return found
+                }
             }
         } else if let array = any as? [Any] {
             for value in array {
-                if let found = extractSubscribedState(from: value) { return found }
+                if let found = extractSubscribedState(from: value, insideSubscribeButton: insideSubscribeButton) {
+                    return found
+                }
             }
         }
         return nil
