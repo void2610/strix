@@ -605,6 +605,20 @@ struct ChannelSubscribedStateTests {
         let header: [String: Any] = ["pageHeaderRenderer": ["content": ["title": "X"]]]
         #expect(ContentClient.extractSubscribedState(from: header) == nil)
     }
+
+    /// subscribe ボタンと無関係な subscribed フラグを誤検出しないことを保証する回帰テスト
+    @Test func ignoresSubscribedOutsideSubscribeButton() {
+        let header: [String: Any] = [
+            "pageHeaderRenderer": [
+                "content": [
+                    "someOtherComponent": ["subscribed": true],
+                    "metadata": ["subscribed": true]
+                ]
+            ],
+            "subscribed": true
+        ]
+        #expect(ContentClient.extractSubscribedState(from: header) == nil)
+    }
 }
 
 // MARK: - ContentClient 結合テスト (fetchHistoryVideos)
