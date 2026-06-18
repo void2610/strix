@@ -581,6 +581,46 @@ struct ChannelViewModelTests {
     }
 }
 
+// MARK: - 登録状態パース ユニットテスト
+
+struct ChannelSubscribedStateTests {
+
+    @Test func c4LayoutSubscribed() {
+        let header: [String: Any] = ["c4TabbedHeaderRenderer": ["subscribeButton": ["subscribeButtonRenderer": ["subscribed": true]]]]
+        #expect(ContentClient.extractSubscribedState(from: header) == true)
+    }
+
+    @Test func pageHeaderLayoutSubscribed() {
+        // 再帰探索のため actions の配列ネストを通して subscribeButtonViewModel を検出できる
+        let header: [String: Any] = ["pageHeaderRenderer": ["content": ["actions": [["subscribeButtonViewModel": ["subscribed": true]]]]]]
+        #expect(ContentClient.extractSubscribedState(from: header) == true)
+    }
+
+    @Test func pageHeaderLayoutNotSubscribed() {
+        let header: [String: Any] = ["pageHeaderRenderer": ["content": ["actions": [["subscribeButtonViewModel": ["subscribed": false]]]]]]
+        #expect(ContentClient.extractSubscribedState(from: header) == false)
+    }
+
+    @Test func absentReturnsNil() {
+        let header: [String: Any] = ["pageHeaderRenderer": ["content": ["title": "X"]]]
+        #expect(ContentClient.extractSubscribedState(from: header) == nil)
+    }
+
+    /// subscribe ボタンと無関係な subscribed フラグを誤検出しないことを保証する回帰テスト
+    @Test func ignoresSubscribedOutsideSubscribeButton() {
+        let header: [String: Any] = [
+            "pageHeaderRenderer": [
+                "content": [
+                    "someOtherComponent": ["subscribed": true],
+                    "metadata": ["subscribed": true]
+                ]
+            ],
+            "subscribed": true
+        ]
+        #expect(ContentClient.extractSubscribedState(from: header) == nil)
+    }
+}
+
 // MARK: - ContentClient 結合テスト (fetchHistoryVideos)
 
 struct ContentClientHistoryTests {

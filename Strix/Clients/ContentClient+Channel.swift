@@ -44,7 +44,9 @@ extension ContentClient {
         let bannerSources = bannerThumbs ?? pageBannerSources
         let bannerURL = ContentClient.imageURL(from: bannerSources?.last?["url"] as? String)
 
-        let subscribed = ((c4?["subscribeButton"] as? [String: Any])?["subscribeButtonRenderer"] as? [String: Any])?["subscribed"] as? Bool ?? false
+        // c4TabbedHeaderRenderer は subscribeButtonRenderer、pageHeaderRenderer は subscribeButtonViewModel に
+        // 登録状態を持つため、header 配下を再帰探索して両レイアウトに対応する
+        let subscribed = extractSubscribedState(from: header) ?? false
 
         return ChannelInfo(
             channelId: channelId,
@@ -56,6 +58,33 @@ extension ContentClient {
             bannerURL: bannerURL,
             subscribed: subscribed
         )
+    }
+
+    /// header 配下から登録状態を再帰探索する。
+    /// 旧 c4TabbedHeaderRenderer は `subscribeButtonRenderer`、新 pageHeaderRenderer は
+    /// `subscribeButtonViewModel` に登録状態を持つ。これらのサブツリーに入って初めて
+    /// `subscribed` を採用することで、subscribe ボタンと無関係な `subscribed` の誤検出を防ぐ。
+    static func extractSubscribedState(from any: Any?, insideSubscribeButton: Bool = false) -> Bool? {
+        if let dict = any as? [String: Any] {
+            if insideSubscribeButton, let subscribed = dict["subscribed"] as? Bool {
+                return subscribed
+            }
+            for (key, value) in dict {
+                let nowInside = insideSubscribeButton
+                    || key == "subscribeButtonRenderer"
+                    || key == "subscribeButtonViewModel"
+                if let found = extractSubscribedState(from: value, insideSubscribeButton: nowInside) {
+                    return found
+                }
+            }
+        } else if let array = any as? [Any] {
+            for value in array {
+                if let found = extractSubscribedState(from: value, insideSubscribeButton: insideSubscribeButton) {
+                    return found
+                }
+            }
+        }
+        return nil
     }
 
     /// チャンネルの特定タブを取得する（params で動画/ライブ/プレイリストを切り替え）。
