@@ -22,6 +22,7 @@ struct PlayerView: View {
     @State private var showBotVerify = false
     @State private var showFullDescription = false
     @State private var showComments = false
+    @State private var showQueue = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -42,19 +43,28 @@ struct PlayerView: View {
             if !isFullScreen {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                // プレイリスト再生インジケータ（N/M 表示。前/次ボタンはプレイヤー内へ移行済み）
+                // 再生キューインジケータ（N/M 表示。タップでキュー一覧を開く）
                 if !vm.playlistQueue.isEmpty, !vm.isLoadingStream, vm.streamError == nil {
-                    HStack {
-                        Image(systemName: "list.and.film")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("プレイリスト再生中  \(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
+                    Button {
+                        showQueue = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "list.and.film")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("再生キュー  \(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                    .buttonStyle(.plain)
                 }
 
                 if vm.isLoadingStream {
@@ -103,6 +113,10 @@ struct PlayerView: View {
                     await vm.load(videoID: videoID, modelContext: modelContext)
                 }
             }
+        }
+        .sheet(isPresented: $showQueue) {
+            QueueSheet()
+                .environment(coordinator)
         }
     }
 
@@ -610,7 +624,7 @@ struct PlayerView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(vm.relatedVideos) { video in
                         Button {
-                            coordinator.play(videoID: video.videoId)
+                            coordinator.play(video)
                         } label: {
                             VideoRowView(video: video)
                                 .padding(.horizontal, 12)
