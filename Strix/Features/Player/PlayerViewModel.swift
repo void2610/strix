@@ -64,6 +64,14 @@ final class PlayerViewModel {
     /// 現在再生中のプレイリスト内インデックス
     var playlistIndex: Int = 0
 
+    /// 現在ロード済みの動画を VideoItem として返す（手動キューの種化用）
+    var currentVideoItem: VideoItem? {
+        guard let id = loadedVideoID, let info = videoInfo else { return nil }
+        return VideoItem(videoId: id, title: info.title, channelId: info.channelId,
+                         channelName: info.channelName, thumbnailURL: URL(string: info.thumbnailURL),
+                         channelAvatarURL: info.channelAvatarURL)
+    }
+
     private let youtubeClient: YouTubeClient
     private let contentClient: ContentClient
     /// rate 変更監視トークン（再生再開時に playbackRate を復元するため）

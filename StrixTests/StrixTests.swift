@@ -1908,6 +1908,71 @@ struct PlayerCoordinatorTests {
         #expect(coordinator.currentVideoID == nil)
         #expect(coordinator.playlistQueue.isEmpty)
     }
+
+    // MARK: - 手動キュー操作
+
+    private func item(_ id: String) -> VideoItem { VideoItem(videoId: id, title: id) }
+
+    @Test func enqueueWhileHiddenStartsPlayback() {
+        let coordinator = PlayerCoordinator()
+        coordinator.enqueue(item("a"))
+
+        #expect(coordinator.mode == .fullScreen)
+        #expect(coordinator.currentVideoID == "a")
+    }
+
+    @Test func enqueueSeedsQueueFromCurrentVideo() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(item("a"))
+        coordinator.enqueue(item("b"))
+
+        #expect(coordinator.playlistQueue.map(\.videoId) == ["a", "b"])
+        #expect(coordinator.initialIndex == 0)
+    }
+
+    @Test func playNextInsertsAfterCurrent() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(item("a"), playlistQueue: [item("a"), item("b"), item("c")], initialIndex: 1)
+        coordinator.playNext(item("x"))
+
+        #expect(coordinator.playlistQueue.map(\.videoId) == ["a", "b", "x", "c"])
+        #expect(coordinator.initialIndex == 1)
+    }
+
+    @Test func removeBeforeCurrentShiftsIndex() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(item("c"), playlistQueue: [item("a"), item("b"), item("c")], initialIndex: 2)
+        coordinator.removeFromQueue(at: 0)
+
+        #expect(coordinator.playlistQueue.map(\.videoId) == ["b", "c"])
+        #expect(coordinator.initialIndex == 1)
+    }
+
+    @Test func removeCurrentIsIgnored() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(item("a"), playlistQueue: [item("a"), item("b")], initialIndex: 0)
+        coordinator.removeFromQueue(at: 0)
+
+        #expect(coordinator.playlistQueue.count == 2)
+    }
+
+    @Test func movePreservesCurrentTrack() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(item("a"), playlistQueue: [item("a"), item("b"), item("c")], initialIndex: 0)
+        coordinator.moveInQueue(from: IndexSet(integer: 2), to: 0)
+
+        #expect(coordinator.playlistQueue.map(\.videoId) == ["c", "a", "b"])
+        #expect(coordinator.playlistQueue[coordinator.initialIndex].videoId == "a")
+    }
+
+    @Test func jumpToSetsCurrent() {
+        let coordinator = PlayerCoordinator()
+        coordinator.play(item("a"), playlistQueue: [item("a"), item("b"), item("c")], initialIndex: 0)
+        coordinator.jumpTo(index: 2)
+
+        #expect(coordinator.initialIndex == 2)
+        #expect(coordinator.currentVideoID == "c")
+    }
 }
 
 // MARK: - PlayerViewModel コメント ユニットテスト
