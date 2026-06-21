@@ -241,6 +241,50 @@ struct ContentClientParsingTests {
         #expect(item?.viewCountText == "123万回視聴")
         #expect(item?.timePostedText == "1年前")
     }
+
+    // MARK: メンバー限定動画の除外
+
+    @Test func parseVideoRendererExcludesMembersOnlyLockup() {
+        var json = makeLockupViewModelJSON(contentId: "members123")
+        var metadata = json["metadata"] as! [String: Any]
+        var lmvm = metadata["lockupMetadataViewModel"] as! [String: Any]
+        lmvm["metadata"] = [
+            "contentMetadataViewModel": [
+                "metadataRows": [
+                    ["badges": [
+                        ["badgeViewModel": [
+                            "badgeText": "メンバー限定",
+                            "badgeStyle": "BADGE_MEMBERS_ONLY",
+                            "iconName": "SPONSORSHIP_STAR"
+                        ]]
+                    ]]
+                ]
+            ]
+        ]
+        metadata["lockupMetadataViewModel"] = lmvm
+        json["metadata"] = metadata
+        #expect(ContentClient.parseVideoRenderer(json) == nil)
+    }
+
+    @Test func parseVideoRendererExcludesMembersOnlyVideoRenderer() {
+        let json: [String: Any] = [
+            "videoId": "memvr123",
+            "title": ["runs": [["text": "メンバー限定動画"]]],
+            "thumbnail": ["thumbnails": [["url": "https://example.com/m.jpg"]]],
+            "badges": [
+                ["metadataBadgeRenderer": [
+                    "style": "BADGE_STYLE_TYPE_MEMBERS_ONLY",
+                    "label": "メンバー限定"
+                ]]
+            ]
+        ]
+        #expect(ContentClient.parseVideoRenderer(json) == nil)
+    }
+
+    @Test func parseVideoRendererKeepsNonMembersVideo() {
+        let json = makeLockupViewModelJSON(contentId: "public123")
+        #expect(ContentClient.parseVideoRenderer(json)?.videoId == "public123")
+    }
 }
 
 // MARK: - lockupViewModel プレイリスト・ミックス パーサーテスト

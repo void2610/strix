@@ -62,6 +62,9 @@ extension ContentClient {
 
     /// videoRenderer / compactVideoRenderer / playlistVideoRenderer / lockupViewModel / videoWithContextModel から VideoItem を生成する。
     static func parseVideoRenderer(_ vr: [String: Any]) -> VideoItem? {
+        // 未加入では再生できないメンバー限定動画は一覧から除外する
+        if containsMembersOnlyBadge(vr) { return nil }
+
         // ── WEB 新形式: lockupViewModel ────────────────────────────────────
         if vr["contentId"] != nil {
             return parseLockupViewModel(vr)
@@ -243,6 +246,20 @@ extension ContentClient {
             timePostedText: timePosted,
             feedbackTokens: tokens
         )
+    }
+
+    /// メンバー限定動画を示すバッジを再帰的に検出する。
+    /// WEB 新形式: badgeViewModel.badgeStyle == "BADGE_MEMBERS_ONLY"
+    /// WEB 旧形式: metadataBadgeRenderer.style == "BADGE_STYLE_TYPE_MEMBERS_ONLY"
+    static func containsMembersOnlyBadge(_ json: Any) -> Bool {
+        if let dict = json as? [String: Any] {
+            if dict["badgeStyle"] as? String == "BADGE_MEMBERS_ONLY" { return true }
+            if dict["style"] as? String == "BADGE_STYLE_TYPE_MEMBERS_ONLY" { return true }
+            for v in dict.values where containsMembersOnlyBadge(v) { return true }
+        } else if let array = json as? [Any] {
+            for v in array where containsMembersOnlyBadge(v) { return true }
+        }
+        return false
     }
 
     /// レンダラー JSON から feedbackToken を再帰的に抽出する。
