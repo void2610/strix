@@ -26,8 +26,18 @@ extension ContentClient {
     /// WEB 新形式 → lockupViewModel
     /// IOS 旧形式 → compactVideoRenderer / elementRenderer 内の videoWithContextModel
     /// IOS 新形式 → videoWithContextModel
+    /// 広告枠のラッパーキー。配下にネストした動画レンダラーを含むためサブツリーごと除外する。
+    static let adRendererKeys: Set<String> = [
+        "adSlotRenderer", "promotedVideoRenderer", "compactPromotedVideoRenderer",
+        "promotedSparklesWebRenderer", "promotedSparklesTextSearchRenderer",
+        "searchPyvRenderer", "displayAdLayoutViewModel", "inFeedAdLayoutRenderer",
+        "bannerPromoRenderer", "statementBannerRenderer", "adSlotMetadata"
+    ]
+
     static func findVideoRenderers(in json: Any) -> [[String: Any]] {
         if let dict = json as? [String: Any] {
+            // 広告枠はサブツリーごと除外（ネスト内の動画レンダラーが拾われるのを防ぐ）
+            if dict.keys.contains(where: { adRendererKeys.contains($0) }) { return [] }
             // WEB 旧形式
             if let vr = dict["videoRenderer"] as? [String: Any] { return [vr] }
             if let vr = dict["compactVideoRenderer"] as? [String: Any] { return [vr] }
@@ -80,10 +90,11 @@ extension ContentClient {
 
         // タイトル: videoRenderer → title.runs[0].text
         //           compactVideoRenderer → title.simpleText
+        // 解決できないものは広告等の不正エントリとみなし除外する
         let titleObj = vr["title"] as? [String: Any]
-        let title = (titleObj?["simpleText"] as? String)
+        guard let title = (titleObj?["simpleText"] as? String)
             ?? ((titleObj?["runs"] as? [[String: Any]])?.first?["text"] as? String)
-            ?? videoId
+        else { return nil }
 
         // サムネイル
         let thumbs = (vr["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]
@@ -138,8 +149,8 @@ extension ContentClient {
 
         let lmvm = (lvm["metadata"] as? [String: Any])?["lockupMetadataViewModel"] as? [String: Any]
 
-        // タイトル
-        let title = (lmvm?["title"] as? [String: Any])?["content"] as? String ?? contentId
+        // タイトル: 解決できないものは広告等の不正エントリとみなし除外する
+        guard let title = (lmvm?["title"] as? [String: Any])?["content"] as? String else { return nil }
 
         // サムネイル: thumbnailViewModel または collectionThumbnailViewModel
         let ci = lvm["contentImage"] as? [String: Any]
@@ -207,8 +218,8 @@ extension ContentClient {
         let videoData   = data["videoData"]         as? [String: Any]
         let metadata    = videoData?["metadata"]    as? [String: Any]
 
-        // タイトル
-        let title = (metadata?["title"] as? String) ?? videoId
+        // タイトル: 解決できないものは広告等の不正エントリとみなし除外する
+        guard let title = metadata?["title"] as? String else { return nil }
 
         // チャンネル名: byline または channelName
         let channelName = (metadata?["byline"] as? String)

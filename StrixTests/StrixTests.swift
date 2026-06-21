@@ -103,11 +103,11 @@ struct ContentClientParsingTests {
         #expect(item == nil)
     }
 
-    @Test func parseLockupViewModelFallsBackToVideoIdForTitle() {
+    @Test func parseLockupViewModelExcludesTitlelessEntry() {
         var json = makeLockupViewModelJSON(contentId: "fallback123")
-        json["metadata"] = [String: Any]()  // metadata なし
+        json["metadata"] = [String: Any]()  // タイトル解決不可 → 広告等とみなし除外
         let item = ContentClient.parseLockupViewModel(json)
-        #expect(item?.title == "fallback123")
+        #expect(item == nil)
     }
 
     // MARK: findVideoRenderers
@@ -284,6 +284,33 @@ struct ContentClientParsingTests {
     @Test func parseVideoRendererKeepsNonMembersVideo() {
         let json = makeLockupViewModelJSON(contentId: "public123")
         #expect(ContentClient.parseVideoRenderer(json)?.videoId == "public123")
+    }
+
+    // MARK: 広告の除外
+
+    @Test func findVideoRenderersSkipsAdWithNestedRenderer() {
+        // 実際の広告枠は adSlotRenderer 配下に動画レンダラーをネストして含む
+        let json: [String: Any] = [
+            "contents": [
+                ["richItemRenderer": ["content": ["lockupViewModel": makeLockupViewModelJSON(contentId: "real")]]],
+                ["adSlotRenderer": ["fulfillmentContent": ["fulfilledLayout": [
+                    "inFeedAdLayoutRenderer": ["renderingContent": [
+                        "lockupViewModel": makeLockupViewModelJSON(contentId: "JSUfdt8JcX8")
+                    ]]
+                ]]]]
+            ]
+        ]
+        let renderers = ContentClient.findVideoRenderers(in: json)
+        #expect(renderers.count == 1)
+        #expect(renderers.first?["contentId"] as? String == "real")
+    }
+
+    @Test func parseVideoRendererExcludesTitlelessVideoRenderer() {
+        let json: [String: Any] = [
+            "videoId": "JSUfdt8JcX8",
+            "thumbnail": ["thumbnails": [["url": "https://example.com/a.jpg"]]]
+        ]
+        #expect(ContentClient.parseVideoRenderer(json) == nil)
     }
 }
 
