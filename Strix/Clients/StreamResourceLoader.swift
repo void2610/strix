@@ -76,7 +76,7 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
             return
         }
         let start = dataRequest.requestedOffset
-        await waitUntilWithinWindow(offset: start, loadingRequest: loadingRequest)
+        await waitUntilWithinWindow(loadingRequest: loadingRequest)
         if loadingRequest.isCancelled { return }
 
         let end = start + min(Int64(dataRequest.requestedLength), Self.chunkSize) - 1
@@ -112,16 +112,20 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
         }
     }
 
-    /// 再生位置から prefetchWindowSeconds より先のチャンクは、再生が近づくまで取得を遅延する。
-    /// player/長さ/再生時間が不明な間（再生開始直後など）はページングせず即取得する。
-    private func waitUntilWithinWindow(offset: Int64, loadingRequest: AVAssetResourceLoadingRequest) async {
+    /// 再生位置から prefetchWindowSeconds より先までバッファ済みなら、再生が近づくまで取得を遅延する。
+    /// player/再生時間が不明な間（再生開始直後など）はページングせず即取得する。
+    /// バイト⇔時間の線形換算は VBR で破綻し、再生停止 → currentTime 固定 → 窓が前進せず永久停止する
+    /// デッドロックを生むため、実バッファ済み秒数（loadedTimeRanges）で判定する。
+    private func waitUntilWithinWindow(loadingRequest: AVAssetResourceLoadingRequest) async {
         while !loadingRequest.isCancelled {
-            let (player, total) = snapshot()
-            guard let player, let total, total > 0,
-                  let duration = player.currentItem?.duration.seconds, duration.isFinite, duration > 0 else { return }
-            let bytesPerSecond = Double(total) / duration
-            let playedBytes = player.currentTime().seconds * bytesPerSecond
-            if Double(offset) <= playedBytes + Self.prefetchWindowSeconds * bytesPerSecond { return }
+            let (player, _) = snapshot()
+            guard let player, let item = player.currentItem else { return }
+            let current = player.currentTime().seconds
+            guard current.isFinite,
+                  let range = item.loadedTimeRanges.last?.timeRangeValue else { return }
+            let bufferedEnd = (range.start + range.duration).seconds
+            guard bufferedEnd.isFinite else { return }
+            if bufferedEnd - current < Self.prefetchWindowSeconds { return }
             try? await Task.sleep(for: .milliseconds(400))
         }
     }

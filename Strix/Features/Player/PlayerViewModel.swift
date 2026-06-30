@@ -329,7 +329,9 @@ final class PlayerViewModel {
             if let audioURL = info.audioOnlyURL {
                 // adaptive 音声は open-ended Range だとスロットリングされるため区切り付きで取得する
                 let asset = StreamResourceLoader.makeAsset(realURL: audioURL, userAgent: YouTubeConstants.androidVrUserAgent)
-                return AVPlayerItem(asset: asset)
+                let item = AVPlayerItem(asset: asset)
+                item.preferredForwardBufferDuration = 60
+                return item
             }
             let item = AVPlayerItem(url: info.streamURL)
             item.preferredPeakBitRate = 300_000
@@ -342,7 +344,9 @@ final class PlayerViewModel {
             return AVPlayerItem(url: info.streamURL)
         }
         let asset = StreamResourceLoader.makeAsset(realURL: info.streamURL, userAgent: YouTubeConstants.androidVrUserAgent)
-        return AVPlayerItem(asset: asset)
+        let item = AVPlayerItem(asset: asset)
+        item.preferredForwardBufferDuration = 60
+        return item
     }
 
     /// 動画終端通知の監視を登録する（AVPlayerItem 単位のため、アイテム差し替え時に貼り直す）
