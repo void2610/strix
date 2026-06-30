@@ -138,14 +138,12 @@ struct SearchView: View {
 
     private var resultsList: some View {
         List(vm.results) { video in
-            Button {
-                playerCoordinator.play(video)
-            } label: {
-                VideoRowView(video: video)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.plain)
-            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+            VideoRowView(video: video)
+                .padding(.vertical, 4)
+                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                .videoRowInteraction(video: video) {
+                    playerCoordinator.play(video)
+                }
         }
         .listStyle(.plain)
     }

@@ -86,25 +86,19 @@ struct PlaylistDetailView: View {
                     }
 
                     ForEach(Array(vm.videos.enumerated()), id: \.element.id) { index, video in
-                        // List 内で Button + .contextMenu だと長押しが Button に吸われて効かないため、
-                        // contentShape + onTapGesture でタップ領域を確保する
                         VideoRowView(video: video)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
+                            .videoRowInteraction(
+                                video: video,
+                                onRemoveFromPlaylist: {
+                                    Task {
+                                        await vm.remove(video: video, from: playlist.playlistId)
+                                    }
+                                }
+                            ) {
                                 playerCoordinator.play(
                                     videoID: video.videoId,
                                     playlistQueue: vm.videos,
                                     initialIndex: index
-                                )
-                            }
-                            .contextMenu {
-                                VideoContextMenu(
-                                    video: video,
-                                    onRemoveFromPlaylist: {
-                                        Task {
-                                            await vm.remove(video: video, from: playlist.playlistId)
-                                        }
-                                    }
                                 )
                             }
                     }

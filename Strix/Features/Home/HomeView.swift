@@ -232,35 +232,29 @@ struct HomeView: View {
     private var feedSection: some View {
         LazyVStack(spacing: 0) {
             ForEach(vm.videos) { video in
-                Group {
-                    if let playlistId = video.playlistId {
-                        // ミックスリスト・プレイリストはプレイリスト詳細へ
-                        NavigationLink {
-                            PlaylistDetailView(
-                                playlist: YTPlaylist(playlistId: playlistId, title: video.title)
-                            )
-                        } label: {
-                            VideoCardView(video: video)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button {
-                            playerCoordinator.play(video)
-                        } label: {
-                            VideoCardView(video: video)
-                        }
-                        .buttonStyle(.plain)
+                let onDismiss = {
+                    withAnimation {
+                        vm.videos.removeAll { $0.videoId == video.videoId }
                     }
                 }
-                .contextMenu {
-                    VideoContextMenu(
-                        video: video,
-                        onDismiss: {
-                            withAnimation {
-                                vm.videos.removeAll { $0.videoId == video.videoId }
-                            }
+                if let playlistId = video.playlistId {
+                    // ミックスリスト・プレイリストはプレイリスト詳細へ
+                    NavigationLink {
+                        PlaylistDetailView(
+                            playlist: YTPlaylist(playlistId: playlistId, title: video.title)
+                        )
+                    } label: {
+                        VideoCardView(video: video)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        VideoContextMenu(video: video, onDismiss: onDismiss)
+                    }
+                } else {
+                    VideoCardView(video: video)
+                        .videoRowInteraction(video: video, onDismiss: onDismiss) {
+                            playerCoordinator.play(video)
                         }
-                    )
                 }
 
                 Divider()
