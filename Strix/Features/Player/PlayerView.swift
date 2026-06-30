@@ -434,7 +434,7 @@ struct PlayerView: View {
     private var commentsSheet: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(vm.comments) { comment in
                         commentRow(comment)
 
@@ -598,6 +598,8 @@ struct PlayerView: View {
         .padding(.leading, isReply ? 56 : 14)
         .padding(.trailing, 14)
         .padding(.vertical, isReply ? 6 : 10)
+        // 全幅・左寄せにしないと LazyVStack(.center) で短い行が中央寄せされインデントして見える
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var commentAvatarPlaceholder: some View {
