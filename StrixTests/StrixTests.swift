@@ -1691,6 +1691,45 @@ struct CommentParserTests {
         let token = ContentClient.extractCommentContinuation(from: json)
         #expect(token == nil)
     }
+
+    /// 次ページトークンが返信トークンと取り違えられないこと（Dictionary 反復順の非決定性対策）。
+    /// 実レスポンスは各スレッドに返信 continuation を持ち、次ページ用は1個だけ存在する。
+    @Test func parseCommentsPicksSectionTokenNotReplyToken() {
+        let json: [String: Any] = [
+            "onResponseReceivedEndpoints": [[
+                "reloadContinuationItemsCommand": [
+                    "continuationItems": [
+                        [
+                            "commentThreadRenderer": [
+                                "commentViewModel": ["commentViewModel": ["commentId": "TOP1"]],
+                                "replies": ["commentRepliesRenderer": ["contents": [[
+                                    "continuationItemRenderer": ["continuationEndpoint": [
+                                        "continuationCommand": ["token": "REPLY_TOKEN"]
+                                    ]]
+                                ]]]]
+                            ]
+                        ],
+                        // セクション末尾の次ページトークン
+                        ["continuationItemRenderer": ["continuationEndpoint": [
+                            "continuationCommand": ["token": "PAGE_TOKEN"]
+                        ]]]
+                    ]
+                ]
+            ]],
+            "frameworkUpdates": ["entityBatchUpdate": ["mutations": [[
+                "payload": ["commentEntityPayload": [
+                    "properties": ["commentId": "TOP1", "content": ["content": "本文"]],
+                    "author": ["displayName": "ユーザー"],
+                    "toolbar": ["replyCount": "2"]
+                ]]
+            ]]]]
+        ]
+
+        let (comments, continuation) = ContentClient.parseComments(from: json)
+        #expect(continuation == "PAGE_TOKEN")
+        #expect(comments.count == 1)
+        #expect(comments.first?.repliesContinuation == "REPLY_TOKEN")
+    }
 }
 
 // MARK: - PlaybackTracker ユニットテスト

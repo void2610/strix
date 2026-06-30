@@ -38,7 +38,9 @@ extension ContentClient {
                     }
                 }
             }
-            for (_, v) in dict {
+            for (key, v) in dict {
+                // 返信スレッドの continuation はコメントセクションのトークンではないため辿らない
+                if key == "commentRepliesRenderer" { continue }
                 if let token = extractCommentContinuation(from: v) { return token }
             }
         } else if let array = json as? [Any] {
@@ -257,7 +259,10 @@ extension ContentClient {
                     return token
                 }
             }
-            for (_, v) in dict {
+            for (key, v) in dict {
+                // 返信スレッドの continuation は次ページトークンではないため辿らない。
+                // Dictionary の反復順は非決定的なため、除外しないと返信トークンを誤って掴む。
+                if key == "commentRepliesRenderer" { continue }
                 if let token = findCommentNextContinuation(in: v) { return token }
             }
         } else if let array = json as? [Any] {
