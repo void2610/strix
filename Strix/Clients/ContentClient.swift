@@ -49,6 +49,8 @@ struct ContentClient {
     var fetchHistoryPage: (String) async throws -> ([VideoItem], String?)
     var fetchPlaylistVideos: (String) async throws -> [VideoItem]
     var search: (String) async throws -> [VideoItem]
+    /// 検索オートコンプリート候補を取得する
+    var searchSuggestions: (String) async throws -> [String]
     /// 関連動画・動画オーナーアバター・説明欄データを返す
     var fetchRelated: (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?)
     var fetchChannel: (String) async throws -> ChannelInfo
@@ -78,6 +80,7 @@ extension ContentClient {
         fetchHistoryPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         fetchPlaylistVideos: @escaping (String) async throws -> [VideoItem] = { _ in [] },
         search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
+        searchSuggestions: @escaping (String) async throws -> [String] = { _ in [] },
         fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?) = { _ in ([], nil, nil, nil, nil) },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
         subscribe: @escaping (String) async throws -> Void = { _ in },
@@ -88,7 +91,7 @@ extension ContentClient {
         fetchComments: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) },
         fetchCommentsPage: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, fetchRelated: fetchRelated, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, searchSuggestions: searchSuggestions, fetchRelated: fetchRelated, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
     }
 }
 
@@ -153,6 +156,9 @@ extension ContentClient {
                 return (response?.results ?? [])
                     .compactMap { $0 as? YTVideo }
                     .map { $0.toVideoItem }
+            },
+            searchSuggestions: { query in
+                try await ContentClient.fetchSearchSuggestions(query: query)
             },
             fetchRelated: { videoID in
                 let cookies = ""
@@ -268,6 +274,47 @@ extension ContentClient {
 
     private static func fetchHomeNextPageViaInnertubeAPI(cookies: String, continuation: String) async throws -> ([VideoItem], String?) {
         try await fetchBrowseContinuationViaInnertubeAPI(cookies: cookies, continuation: continuation)
+    }
+}
+
+// MARK: - 検索サジェスト
+
+extension ContentClient {
+
+    /// Google の補完エンドポイントから YouTube 検索候補を取得する。
+    /// client=firefox は JSONP ではなく素の JSON 配列 `["query", ["候補1", ...]]` を返す。
+    static func fetchSearchSuggestions(query: String) async throws -> [String] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return [] }
+
+        var comps = URLComponents(string: "https://suggestqueries.google.com/complete/search")
+        comps?.queryItems = [
+            URLQueryItem(name: "client", value: "firefox"),
+            URLQueryItem(name: "ds", value: "yt"),
+            URLQueryItem(name: "hl", value: "ja"),
+            URLQueryItem(name: "q", value: trimmed)
+        ]
+        guard let url = comps?.url else { return [] }
+
+        var request = URLRequest(url: url)
+        request.setValue(YouTubeConstants.webUserAgent, forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await InnertubeRequest.session.data(for: request)
+
+        // 稀に ISO-8859-1 として返るため、UTF-8 で読めなければ latin1 経由で復元する
+        let jsonData: Data = (String(data: data, encoding: .utf8) != nil)
+            ? data
+            : (String(data: data, encoding: .isoLatin1)?.data(using: .utf8) ?? data)
+
+        guard let root = try? JSONSerialization.jsonObject(with: jsonData) as? [Any],
+              root.count >= 2,
+              let list = root[1] as? [Any] else { return [] }
+
+        return list.compactMap { item -> String? in
+            if let s = item as? String { return s }
+            // youtube クライアント形式（候補が配列）への保険
+            if let arr = item as? [Any], let s = arr.first as? String { return s }
+            return nil
+        }
     }
 }
 

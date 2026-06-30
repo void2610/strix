@@ -931,6 +931,39 @@ struct SearchViewModelTests {
         await vm.search("Swift") // reset 後は同一クエリも実行される
         #expect(callCount == 2)
     }
+
+    // MARK: サジェスト
+
+    @Test func loadSuggestionsPopulatesSuggestions() async {
+        let vm = SearchViewModel(client: .mock(
+            searchSuggestions: { q in ["\(q) ライブ", "\(q) カラオケ"] }
+        ))
+        await vm.loadSuggestions("ヨルシカ")
+        #expect(vm.suggestions == ["ヨルシカ ライブ", "ヨルシカ カラオケ"])
+    }
+
+    @Test func loadSuggestionsClearsOnEmptyQuery() async {
+        let vm = SearchViewModel(client: .mock(
+            searchSuggestions: { _ in ["should not appear"] }
+        ))
+        vm.suggestions = ["残骸"]
+        await vm.loadSuggestions("   ")
+        #expect(vm.suggestions.isEmpty)
+    }
+
+    @Test func searchClearsSuggestions() async {
+        let vm = SearchViewModel(client: .mock(searchSuggestions: { _ in [] }))
+        vm.suggestions = ["候補"]
+        await vm.search("テスト")
+        #expect(vm.suggestions.isEmpty)
+    }
+
+    @Test func resetClearsSuggestions() async {
+        let vm = SearchViewModel(client: .mock())
+        vm.suggestions = ["候補"]
+        vm.reset()
+        #expect(vm.suggestions.isEmpty)
+    }
 }
 
 // MARK: - HomeViewModel ユニットテスト

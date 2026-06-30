@@ -11,6 +11,7 @@ import SwiftData
 @Observable
 final class SearchViewModel {
     var results: [VideoItem] = []
+    var suggestions: [String] = []
     var isLoading = false
     var error: String?
     var lastQuery = ""
@@ -28,6 +29,7 @@ final class SearchViewModel {
         isLoading = true
         error = nil
         results = []
+        suggestions = []
         do {
             results = try await client.search(q)
         } catch {
@@ -36,8 +38,21 @@ final class SearchViewModel {
         isLoading = false
     }
 
+    /// 入力に応じてサジェストを更新する。`.task(id:)` から呼ばれ、入力変更で自動キャンセルされる。
+    /// 先頭の sleep がデバウンスを兼ねる（連続入力中はキャンセルされ通信が走らない）。
+    func loadSuggestions(_ query: String) async {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { suggestions = []; return }
+        try? await Task.sleep(for: .milliseconds(200))
+        guard !Task.isCancelled else { return }
+        let list = (try? await client.searchSuggestions(q)) ?? []
+        guard !Task.isCancelled else { return }
+        suggestions = list
+    }
+
     func reset() {
         results = []
+        suggestions = []
         lastQuery = ""
         error = nil
     }
@@ -81,11 +96,20 @@ struct SearchView: View {
             .navigationTitle("検索")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $query, prompt: "動画を検索")
+            .searchSuggestions {
+                ForEach(vm.suggestions, id: \.self) { suggestion in
+                    Label(suggestion, systemImage: "magnifyingglass")
+                        .searchCompletion(suggestion)
+                }
+            }
             .onSubmit(of: .search) {
                 Task {
                     await vm.search(query)
                     saveSearchHistory(query)
                 }
+            }
+            .task(id: query) {
+                await vm.loadSuggestions(query)
             }
             .onChange(of: query) { _, new in
                 if new.isEmpty { vm.reset() }
