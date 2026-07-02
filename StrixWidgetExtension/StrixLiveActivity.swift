@@ -6,6 +6,7 @@
 //
 
 import ActivityKit
+import AppIntents
 import WidgetKit
 import SwiftUI
 
@@ -32,7 +33,10 @@ struct StrixLiveActivityWidget: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    playbackControls(isPlaying: context.state.isPlaying)
+                    HStack(spacing: 12) {
+                        PlaybackSpeedButton(rate: context.state.playbackRate)
+                        playbackControls(isPlaying: context.state.isPlaying)
+                    }
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
@@ -87,6 +91,28 @@ struct StrixLiveActivityWidget: Widget {
     }
 }
 
+// MARK: - 倍速トグルボタン
+
+/// 1× ↔ 2× を切り替えるボタン。App Intent 経由でアプリ本体の再生速度を変更する。
+private struct PlaybackSpeedButton: View {
+    let rate: Double
+
+    var body: some View {
+        Button(intent: TogglePlaybackSpeedIntent()) {
+            // 1.5 などメニューで設定した任意の速度もそのまま表示する
+            Text(String(format: "%g×", rate))
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(rate == 1.0 ? Color.primary : Color.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(rate == 1.0 ? Color.primary.opacity(0.15) : Color.red)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - ロック画面表示
 
 private struct LockScreenView: View {
@@ -118,6 +144,8 @@ private struct LockScreenView: View {
             }
 
             Spacer()
+
+            PlaybackSpeedButton(rate: state.playbackRate)
 
             Image(systemName: state.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                 .font(.title)

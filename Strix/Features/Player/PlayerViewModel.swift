@@ -24,7 +24,11 @@ final class PlayerViewModel {
         let v = UserDefaults.standard.float(forKey: "playbackRate")
         return v.isZero ? 1.0 : v
     }() {
-        didSet { UserDefaults.standard.set(playbackRate, forKey: "playbackRate") }
+        didSet {
+            UserDefaults.standard.set(playbackRate, forKey: "playbackRate")
+            // ダイナミックアイランドの倍速表示を同期する
+            LiveActivityManager.shared.updatePlaybackRate(playbackRate)
+        }
     }
     /// 音声のみモード（UserDefaults に永続化）
     var isAudioOnly: Bool = UserDefaults.standard.bool(forKey: "isAudioOnly") {
@@ -172,7 +176,9 @@ final class PlayerViewModel {
                 title: info.title,
                 channelName: "",
                 thumbnailURL: info.thumbnailURL,
-                player: avPlayer
+                player: avPlayer,
+                playbackRate: playbackRate,
+                onSpeedToggle: { [weak self] in self?.togglePlaybackRate() }
             )
             playbackTracker.start(player: avPlayer, trackingURLs: info.playbackTrackingURLs)
             saveToHistory(videoID: videoID, info: info, modelContext: modelContext)
@@ -265,10 +271,10 @@ final class PlayerViewModel {
         loadingRepliesFor.remove(commentId)
     }
 
-    /// 再生速度を 1.0 → 2.0 → 1.0 の順に切り替える
+    /// 再生速度を 1.0 → 2.0 → 1.0 の順に切り替える。
+    /// 一時停止中は速度だけ変えて再生は再開しない（再開時に rateObserver が適用する）。
     func togglePlaybackRate() {
-        playbackRate = (playbackRate == 1.0) ? 2.0 : 1.0
-        player?.rate = playbackRate
+        setPlaybackRate(playbackRate == 1.0 ? 2.0 : 1.0)
     }
 
     /// 任意の再生速度を適用する（倍速メニュー用）

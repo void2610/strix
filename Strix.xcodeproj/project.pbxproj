@@ -81,6 +81,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Utilities/StrixActivityAttributes.swift,
+				Utilities/TogglePlaybackSpeedIntent.swift,
 			);
 			target = AE9B608D2F866F1B000B938F /* StrixWidgetExtensionExtension */;
 		};
