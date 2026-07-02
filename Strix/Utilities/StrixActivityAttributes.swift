@@ -18,5 +18,7 @@ struct StrixActivityAttributes: ActivityAttributes {
         var isPlaying: Bool
         var elapsedSeconds: Double
         var durationSeconds: Double
+        /// 現在の再生速度（1.0・2.0 のほか倍速メニューの任意値）
+        var playbackRate: Double = 1.0
     }
 }

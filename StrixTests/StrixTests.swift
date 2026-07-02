@@ -2545,3 +2545,74 @@ struct Mp4AudioStreamURLSelectionTests {
         #expect(YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams) == nil)
     }
 }
+
+// MARK: - 倍速トグル（ダイナミックアイランド連携）テスト
+
+@MainActor
+struct PlaybackSpeedToggleTests {
+
+    /// UserDefaults の playbackRate を退避してから実行し、終了後に復元する
+    private func withCleanRateDefaults(_ body: () throws -> Void) rethrows {
+        let saved = UserDefaults.standard.object(forKey: "playbackRate")
+        UserDefaults.standard.removeObject(forKey: "playbackRate")
+        defer {
+            if let saved {
+                UserDefaults.standard.set(saved, forKey: "playbackRate")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "playbackRate")
+            }
+        }
+        try body()
+    }
+
+    /// 1.0 → 2.0 → 1.0 とトグルされ、UserDefaults に永続化されること
+    @Test func togglePlaybackRateFlipsAndPersists() {
+        withCleanRateDefaults {
+            let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+            #expect(vm.playbackRate == 1.0)
+            vm.togglePlaybackRate()
+            #expect(vm.playbackRate == 2.0)
+            #expect(UserDefaults.standard.float(forKey: "playbackRate") == 2.0)
+            vm.togglePlaybackRate()
+            #expect(vm.playbackRate == 1.0)
+            #expect(UserDefaults.standard.float(forKey: "playbackRate") == 1.0)
+        }
+    }
+
+    /// 一時停止中にトグルしても速度だけ変わり、再生は再開されないこと
+    @Test func toggleWhilePausedDoesNotResume() {
+        withCleanRateDefaults {
+            let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+            vm.player = AVPlayer()
+            vm.togglePlaybackRate()
+            #expect(vm.playbackRate == 2.0)
+            #expect(vm.player?.rate == 0)
+        }
+    }
+
+    /// TogglePlaybackSpeedIntent の実行で倍速トグル通知が飛ぶこと
+    @Test func intentPostsToggleNotification() async throws {
+        try await confirmation("倍速トグル通知が届く") { confirm in
+            let token = NotificationCenter.default.addObserver(
+                forName: .strixTogglePlaybackSpeed, object: nil, queue: nil
+            ) { _ in confirm() }
+            defer { NotificationCenter.default.removeObserver(token) }
+            _ = try await TogglePlaybackSpeedIntent().perform()
+        }
+    }
+
+    /// LiveActivityManager が倍速トグル通知を start() で登録したハンドラへ転送すること
+    @Test func liveActivityManagerForwardsToggle() async {
+        await confirmation("ハンドラが呼ばれる") { confirm in
+            LiveActivityManager.shared.start(
+                title: "テスト", channelName: "", thumbnailURL: "",
+                player: AVPlayer(), playbackRate: 1.0,
+                onSpeedToggle: { confirm() }
+            )
+            NotificationCenter.default.post(name: .strixTogglePlaybackSpeed, object: nil)
+            // 通知はメインキュー → MainActor Task 経由で届くため少し待つ
+            try? await Task.sleep(for: .milliseconds(300))
+            LiveActivityManager.shared.stop()
+        }
+    }
+}

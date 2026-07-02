@@ -12,14 +12,30 @@ import AVFoundation
 @MainActor
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
-    private init() {}
+    private init() {
+        // ダイナミックアイランドの倍速ボタン（TogglePlaybackSpeedIntent）からの要求を受ける
+        NotificationCenter.default.addObserver(
+            forName: .strixTogglePlaybackSpeed,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.onSpeedToggle?()
+            }
+        }
+    }
 
     private var activity: Activity<StrixActivityAttributes>?
+    /// 倍速トグル要求時に呼ばれるハンドラ（PlayerViewModel が start() で登録する）
+    private var onSpeedToggle: (() -> Void)?
 
     // MARK: - 外部インターフェース
 
     /// 再生開始時に Live Activity を起動する。
-    func start(title: String, channelName: String, thumbnailURL: String, player: AVPlayer) {
+    /// - Parameter onSpeedToggle: ダイナミックアイランドの倍速ボタンが押されたときに呼ばれる
+    func start(title: String, channelName: String, thumbnailURL: String, player: AVPlayer,
+               playbackRate: Float = 1.0, onSpeedToggle: (() -> Void)? = nil) {
+        self.onSpeedToggle = onSpeedToggle
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             strixLog(" LiveActivity: 端末で Live Activities が無効")
             return
@@ -34,7 +50,8 @@ final class LiveActivityManager {
             thumbnailURL: thumbnailURL,
             isPlaying: player.rate != 0,
             elapsedSeconds: CMTimeGetSeconds(player.currentTime()),
-            durationSeconds: durationSeconds(of: player)
+            durationSeconds: durationSeconds(of: player),
+            playbackRate: Double(playbackRate)
         )
 
         do {
@@ -62,8 +79,19 @@ final class LiveActivityManager {
         }
     }
 
+    /// 再生速度が変化したときにダイナミックアイランドの表示を更新する。
+    func updatePlaybackRate(_ rate: Float) {
+        guard let activity else { return }
+        Task {
+            var state = await activity.content.state
+            state.playbackRate = Double(rate)
+            await activity.update(.init(state: state, staleDate: nil))
+        }
+    }
+
     /// 再生停止時に Live Activity を終了する。
     func stop() {
+        onSpeedToggle = nil
         Task { await stopCurrent() }
     }
 
