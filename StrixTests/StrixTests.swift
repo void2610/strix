@@ -2603,16 +2603,21 @@ struct PlaybackSpeedToggleTests {
 
     /// LiveActivityManager が倍速トグル通知を start() で登録したハンドラへ転送すること
     @Test func liveActivityManagerForwardsToggle() async {
-        await confirmation("ハンドラが呼ばれる") { confirm in
-            LiveActivityManager.shared.start(
-                title: "テスト", channelName: "", thumbnailURL: "",
-                player: AVPlayer(), playbackRate: 1.0,
-                onSpeedToggle: { confirm() }
-            )
-            NotificationCenter.default.post(name: .strixTogglePlaybackSpeed, object: nil)
-            // 通知はメインキュー → MainActor Task 経由で届くため少し待つ
-            try? await Task.sleep(for: .milliseconds(300))
-            LiveActivityManager.shared.stop()
+        var toggled = false
+        LiveActivityManager.shared.start(
+            title: "テスト", channelName: "", thumbnailURL: "",
+            player: AVPlayer(), playbackRate: 1.0,
+            onSpeedToggle: { toggled = true }
+        )
+        NotificationCenter.default.post(name: .strixTogglePlaybackSpeed, object: nil)
+        // 通知はメインキュー → MainActor Task 経由で非同期に届くため、
+        // 固定 sleep ではなく到達し次第すぐ抜けるポーリングで待つ（上限 2 秒）
+        var waited = 0
+        while !toggled && waited < 200 {
+            try? await Task.sleep(for: .milliseconds(10))
+            waited += 1
         }
+        LiveActivityManager.shared.stop()
+        #expect(toggled)
     }
 }

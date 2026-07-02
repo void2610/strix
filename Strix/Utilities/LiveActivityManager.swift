@@ -18,7 +18,7 @@ final class LiveActivityManager {
             forName: .strixTogglePlaybackSpeed,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { _ in
             Task { @MainActor [weak self] in
                 self?.onSpeedToggle?()
             }
