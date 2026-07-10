@@ -10,7 +10,7 @@ import SwiftData
 import NukeUI
 
 /// オフライン保存済み・ダウンロード中の動画一覧。
-/// 完了したものはタップでオフライン再生、スワイプで削除できる。
+/// 完了したものはタップでオフライン再生、長押しで削除できる。
 struct DownloadsView: View {
     @Query(sort: \DownloadedVideo.downloadedAt, order: .reverse)
     private var downloads: [DownloadedVideo]
@@ -32,7 +32,7 @@ struct DownloadsView: View {
                                         liveProgress: DownloadManager.shared.progress[download.videoID])
                             .contentShape(Rectangle())
                             .onTapGesture { play(download) }
-                            .swipeActions(edge: .trailing) {
+                            .contextMenu {
                                 Button(role: .destructive) {
                                     DownloadManager.shared.delete(download, modelContext: modelContext)
                                 } label: {
