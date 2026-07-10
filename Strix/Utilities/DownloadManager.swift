@@ -83,7 +83,8 @@ final class DownloadManager {
 
         progress[videoID] = 0
         let task = Task { [weak self] in
-            await self?.runDownload(video: video, modelContext: modelContext)
+            guard let self else { return }
+            await self.runDownload(video: video, modelContext: modelContext)
         }
         tasks[videoID] = task
     }
