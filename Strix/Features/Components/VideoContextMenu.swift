@@ -90,7 +90,7 @@ struct VideoContextMenu: View {
     @ViewBuilder
     private var downloadButton: some View {
         let record = DownloadManager.record(for: video.videoId, in: modelContext)
-        if record?.state == .completed {
+        if let record, DownloadManager.isPlayableOffline(record) {
             Button {} label: {
                 Label("ダウンロード済み", systemImage: "arrow.down.circle.fill")
             }
