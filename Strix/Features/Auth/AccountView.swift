@@ -186,6 +186,12 @@ struct AccountView: View {
             }
 
             NavigationLink {
+                DownloadsView()
+            } label: {
+                Label("ダウンロード", systemImage: "arrow.down.circle")
+            }
+
+            NavigationLink {
                 PlaylistDetailView(
                     playlist: vm.watchLater
                         ?? YTPlaylist(playlistId: "VLWL", title: "後で見る")
