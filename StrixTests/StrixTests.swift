@@ -2545,3 +2545,251 @@ struct Mp4AudioStreamURLSelectionTests {
         #expect(YouTubeClient.selectMp4AudioURL(fromStreamURLs: streams) == nil)
     }
 }
+
+// MARK: - ダウンロード: DownloadedVideo モデル ユニットテスト
+
+struct DownloadedVideoTests {
+
+    @Test func initDefaultsToDownloading() {
+        let d = DownloadedVideo(videoID: "a", title: "t", fileName: "a.mp4")
+        #expect(d.state == .downloading)
+        #expect(d.progress == 0)
+        #expect(d.fileSize == 0)
+    }
+
+    @Test func stateSetterUpdatesRawValue() {
+        let d = DownloadedVideo(videoID: "a", title: "t", fileName: "a.mp4")
+        d.state = .completed
+        #expect(d.stateRaw == DownloadState.completed.rawValue)
+        #expect(d.state == .completed)
+    }
+
+    @Test func unknownRawValueMapsToFailed() {
+        let d = DownloadedVideo(videoID: "a", title: "t", fileName: "a.mp4")
+        d.stateRaw = 99
+        #expect(d.state == .failed)
+    }
+
+    @Test func toVideoItemMapsFields() {
+        let d = DownloadedVideo(videoID: "vid", title: "タイトル", channelName: "ch",
+                                remoteThumbnailURL: "https://ex.com/t.jpg", fileName: "vid.mp4")
+        let item = d.toVideoItem
+        #expect(item.videoId == "vid")
+        #expect(item.title == "タイトル")
+        #expect(item.channelName == "ch")
+        #expect(item.thumbnailURL?.absoluteString == "https://ex.com/t.jpg")
+    }
+}
+
+// MARK: - ダウンロード: progressive URL 選択 ユニットテスト
+
+struct ProgressiveDownloadURLTests {
+
+    @Test func selectsItag22First() {
+        let formats: [[String: Any]] = [
+            ["itag": 18, "url": "https://ex.com/18"],
+            ["itag": 22, "url": "https://ex.com/22"]
+        ]
+        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/22")
+    }
+
+    @Test func fallsBackToItag18() {
+        let formats: [[String: Any]] = [["itag": 18, "url": "https://ex.com/18"]]
+        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/18")
+    }
+
+    /// url を持たない（signatureCipher のみの）フォーマットは保存不可なので選ばない
+    @Test func skipsFormatsWithoutURL() {
+        let formats: [[String: Any]] = [
+            ["itag": 22, "signatureCipher": "x"],
+            ["itag": 18, "url": "https://ex.com/18"]
+        ]
+        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/18")
+    }
+
+    @Test func returnsFirstWithURLWhenNoPreferredItag() {
+        let formats: [[String: Any]] = [["itag": 59, "url": "https://ex.com/59"]]
+        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/59")
+    }
+
+    @Test func returnsNilWhenNoDownloadableURL() {
+        let formats: [[String: Any]] = [["itag": 22, "signatureCipher": "x"]]
+        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats) == nil)
+    }
+}
+
+// MARK: - ダウンロード: DownloadManager ユニットテスト
+
+/// 注入クロージャからの呼び出し回数を数える参照型ヘルパー
+private final class FetchCounter: @unchecked Sendable {
+    private(set) var count = 0
+    func increment() { count += 1 }
+}
+
+@MainActor
+struct DownloadManagerTests {
+
+    private func makeContext() throws -> ModelContext {
+        let container = try ModelContainer(
+            for: DownloadedVideo.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        return ModelContext(container)
+    }
+
+    private func tempBase() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    private func makeStream() -> DownloadStream {
+        DownloadStream(url: URL(string: "https://example.com/v.mp4")!, title: "テスト動画",
+                       thumbnailURL: "", channelName: "チャンネル", lengthSeconds: 120,
+                       userAgent: "UA", fileExtension: "mp4")
+    }
+
+    @Test func successfulDownloadCreatesCompletedRecord() async throws {
+        let ctx = try makeContext()
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let stream = makeStream()
+
+        let manager = DownloadManager(
+            baseDirectory: base,
+            fetchStream: { _ in stream },
+            downloadFile: { _, progress in
+                await progress(0.5)
+                await progress(1.0)
+                let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try Data("video-bytes".utf8).write(to: tmp)
+                return tmp
+            }
+        )
+
+        await manager.runDownload(video: VideoItem(videoId: "dl1", title: "元タイトル"), modelContext: ctx)
+
+        let fetched = try ctx.fetch(FetchDescriptor<DownloadedVideo>())
+        #expect(fetched.count == 1)
+        #expect(fetched.first?.state == .completed)
+        #expect(fetched.first?.title == "テスト動画") // ストリームのメタで更新される
+        #expect(fetched.first?.videoDuration == 120)
+        #expect(fetched.first?.progress == 1)
+        #expect((fetched.first?.fileSize ?? 0) > 0)
+        // 実ファイルが保存先に存在する
+        let saved = base.appendingPathComponent("dl1.mp4")
+        #expect(FileManager.default.fileExists(atPath: saved.path))
+    }
+
+    @Test func failedFetchMarksRecordFailed() async throws {
+        let ctx = try makeContext()
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let manager = DownloadManager(
+            baseDirectory: base,
+            fetchStream: { _ in throw URLError(.notConnectedToInternet) },
+            downloadFile: { _, _ in throw URLError(.badURL) }
+        )
+
+        await manager.runDownload(video: VideoItem(videoId: "dl2", title: "T"), modelContext: ctx)
+
+        let fetched = try ctx.fetch(FetchDescriptor<DownloadedVideo>())
+        #expect(fetched.count == 1)
+        #expect(fetched.first?.state == .failed)
+    }
+
+    @Test func deleteRemovesCompletedRecord() async throws {
+        let ctx = try makeContext()
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let stream = makeStream()
+        let manager = DownloadManager(baseDirectory: base, fetchStream: { _ in stream },
+                                      downloadFile: { _, _ in throw URLError(.badURL) })
+
+        let rec = DownloadedVideo(videoID: "dl3", title: "T", fileName: "dl3.mp4", state: .completed)
+        ctx.insert(rec)
+        try ctx.save()
+
+        manager.delete(rec, modelContext: ctx)
+
+        let fetched = try ctx.fetch(FetchDescriptor<DownloadedVideo>())
+        #expect(fetched.isEmpty)
+    }
+
+    @Test func startDownloadSkipsAlreadyCompleted() async throws {
+        let ctx = try makeContext()
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let stream = makeStream()
+        let counter = FetchCounter()
+        let manager = DownloadManager(
+            baseDirectory: base,
+            fetchStream: { _ in counter.increment(); return stream },
+            downloadFile: { _, _ in throw URLError(.badURL) }
+        )
+
+        let rec = DownloadedVideo(videoID: "dl4", title: "T", fileName: "dl4.mp4", state: .completed)
+        ctx.insert(rec)
+        try ctx.save()
+
+        manager.startDownload(video: VideoItem(videoId: "dl4", title: "T"), modelContext: ctx)
+        #expect(counter.count == 0) // 完了済みなので取得すら走らない
+        #expect(!manager.isDownloading("dl4"))
+    }
+
+    @Test func recordLookupFindsInsertedRecord() throws {
+        let ctx = try makeContext()
+        let rec = DownloadedVideo(videoID: "dl5", title: "T", fileName: "dl5.mp4")
+        ctx.insert(rec)
+        try ctx.save()
+        #expect(DownloadManager.record(for: "dl5", in: ctx)?.videoID == "dl5")
+        #expect(DownloadManager.record(for: "missing", in: ctx) == nil)
+    }
+}
+
+// MARK: - ダウンロード: オフライン再生 ユニットテスト
+
+@MainActor
+struct PlayerViewModelOfflineTests {
+
+    private func makeContext() throws -> ModelContext {
+        let container = try ModelContainer(
+            for: DownloadedVideo.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        return ModelContext(container)
+    }
+
+    @Test func downloadedVideoInfoReturnsNilWithoutRecord() throws {
+        let ctx = try makeContext()
+        #expect(PlayerViewModel.downloadedVideoInfo(videoID: "none", modelContext: ctx) == nil)
+    }
+
+    /// レコードはあってもローカルファイルが存在しなければ nil（ネットワーク再生へフォールバック）
+    @Test func downloadedVideoInfoReturnsNilWhenFileMissing() throws {
+        let ctx = try makeContext()
+        let rec = DownloadedVideo(videoID: "gone", title: "T", fileName: "nonexistent-file.mp4", state: .completed)
+        ctx.insert(rec)
+        try ctx.save()
+        #expect(PlayerViewModel.downloadedVideoInfo(videoID: "gone", modelContext: ctx) == nil)
+    }
+
+    /// ローカルファイル URL はカスタムスキームで包まず、そのまま AVPlayerItem に使うこと
+    @Test func makePlayerItemUsesFileURLDirectly() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+        let fileURL = URL(fileURLWithPath: "/tmp/strix-offline.mp4")
+        let info = VideoInfo(streamURL: fileURL, audioOnlyURL: nil, title: "T", thumbnailURL: "",
+                             channelId: nil, channelName: nil, channelAvatarURL: nil)
+        let item = vm.makePlayerItem(info: info, audioOnly: false)
+        #expect((item.asset as? AVURLAsset)?.url == fileURL)
+    }
+
+    /// 音声のみモードでもローカルファイルはそのまま再生する
+    @Test func makePlayerItemFileURLIgnoresAudioOnly() {
+        let vm = PlayerViewModel(youtubeClient: YouTubeClient(fetchVideo: { _ in fatalError("未使用") }), contentClient: .mock())
+        let fileURL = URL(fileURLWithPath: "/tmp/strix-offline.mp4")
+        let info = VideoInfo(streamURL: fileURL, audioOnlyURL: nil, title: "T", thumbnailURL: "",
+                             channelId: nil, channelName: nil, channelAvatarURL: nil)
+        let item = vm.makePlayerItem(info: info, audioOnly: true)
+        #expect((item.asset as? AVURLAsset)?.url == fileURL)
+    }
+}

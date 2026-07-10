@@ -12,6 +12,7 @@ strix/
 │   ├── Models/
 │   │   ├── VideoItem.swift          # 軽量動画モデル（ホーム・検索・関連動画共通）
 │   │   ├── WatchedVideo.swift       # SwiftData モデル（視聴履歴）
+│   │   ├── DownloadedVideo.swift    # SwiftData モデル（ダウンロード動画・オフライン再生）
 │   │   └── PinnedPlaylist.swift     # SwiftData モデル（ホーム画面プレイリスト選択）
 │   ├── Features/
 │   │   ├── RootTabView.swift        # タブ構成（ホーム・検索・アカウント）
@@ -30,6 +31,9 @@ strix/
 │   │   ├── Account/
 │   │   │   ├── HistoryView.swift    # 視聴履歴
 │   │   │   └── PlaylistDetailView.swift  # プレイリスト動画一覧
+│   │   ├── Downloads/
+│   │   │   └── DownloadsView.swift  # ダウンロード一覧・オフライン再生・進捗表示
+
 │   │   ├── Auth/
 │   │   │   ├── LoginView.swift      # WKWebView ログイン
 │   │   │   ├── BotVerifyView.swift  # ボット検出時の認証画面
@@ -47,6 +51,7 @@ strix/
 │       ├── VideoID.swift            # URL・動画 ID パーサー
 │       ├── AppLogger.swift          # アプリ内ログ
 │       ├── NowPlayingManager.swift  # コントロールセンター表示
+│       ├── DownloadManager.swift    # 動画ダウンロード・オフライン保存管理
 │       ├── LiveActivityManager.swift # ダイナミックアイランド制御
 │       └── StrixActivityAttributes.swift # Live Activity 属性定義（メインアプリ・Widget 共有）
 ├── StrixWidgetExtension/

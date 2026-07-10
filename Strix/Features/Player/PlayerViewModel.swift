@@ -127,7 +127,14 @@ final class PlayerViewModel {
 
     private func loadStream(videoID: String, modelContext: ModelContext) async {
         do {
-            let info = try await youtubeClient.fetchVideo(videoID)
+            // オフライン保存済みならローカルファイルを優先する（ネットワーク不要で即再生）
+            let info: VideoInfo
+            if let localInfo = Self.downloadedVideoInfo(videoID: videoID, modelContext: modelContext) {
+                info = localInfo
+                strixLog("player[Download] ローカルファイルから再生")
+            } else {
+                info = try await youtubeClient.fetchVideo(videoID)
+            }
             videoInfo = info
             let avPlayer = AVPlayer(playerItem: makePlayerItem(info: info, audioOnly: isAudioOnly))
             StreamResourceLoader.attachPlayer(avPlayer, to: avPlayer.currentItem)
@@ -325,6 +332,11 @@ final class PlayerViewModel {
     /// 音声のみモードで音声 URL が取得できなかった場合も動画をそのまま流さず、
     /// ビットレート上限を掛けて HLS の最低画質を選ばせることで通信量を抑える。
     func makePlayerItem(info: VideoInfo, audioOnly: Bool) -> AVPlayerItem {
+        // ローカルファイル（オフライン保存済み）はそのまま再生する。
+        // 音声のみモードでも muxed ファイルをそのまま流す（追加通信を避ける）。
+        if info.streamURL.isFileURL {
+            return AVPlayerItem(url: info.streamURL)
+        }
         if audioOnly {
             if let audioURL = info.audioOnlyURL {
                 // adaptive 音声は open-ended Range だとスロットリングされるため区切り付きで取得する
@@ -433,6 +445,29 @@ final class PlayerViewModel {
 
         let target = CMTime(seconds: record.playbackPosition, preferredTimescale: 600)
         player?.seek(to: target)
+    }
+
+    /// オフライン保存済み動画があればローカルファイル URL の VideoInfo を返す。
+    /// 保存レコードはあるがファイルが存在しない場合は nil（＝ネットワーク再生へフォールバック）。
+    static func downloadedVideoInfo(videoID: String, modelContext: ModelContext) -> VideoInfo? {
+        let targetID = videoID
+        let completed = DownloadState.completed.rawValue
+        var descriptor = FetchDescriptor<DownloadedVideo>(
+            predicate: #Predicate { $0.videoID == targetID && $0.stateRaw == completed }
+        )
+        descriptor.fetchLimit = 1
+        guard let record = try? modelContext.fetch(descriptor).first else { return nil }
+        let fileURL = DownloadManager.localFileURL(fileName: record.fileName)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        return VideoInfo(
+            streamURL: fileURL,
+            audioOnlyURL: nil,
+            title: record.title,
+            thumbnailURL: record.remoteThumbnailURL,
+            channelId: nil,
+            channelName: record.channelName,
+            channelAvatarURL: nil
+        )
     }
 
     /// 視聴履歴を保存する（既存レコードがあれば更新、なければ挿入）

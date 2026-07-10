@@ -18,6 +18,7 @@ struct VideoContextMenu: View {
     var onRemoveFromPlaylist: (() -> Void)? = nil
 
     @Environment(PlayerCoordinator.self) private var coordinator
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         // 興味なし（HomeView のおすすめ等 feedbackTokens がある動画でのみ表示）
@@ -67,6 +68,11 @@ struct VideoContextMenu: View {
             Label("後で見る", systemImage: "clock")
         }
 
+        // ダウンロード（プレイリスト行は対象外）
+        if video.playlistId == nil {
+            downloadButton
+        }
+
         AddToPlaylistMenu(videoId: video.videoId)
 
         // プレイリスト詳細での削除（setVideoId が取れている場合のみ）
@@ -76,6 +82,29 @@ struct VideoContextMenu: View {
                 onRemoveFromPlaylist()
             } label: {
                 Label("プレイリストから削除", systemImage: "trash")
+            }
+        }
+    }
+
+    /// ダウンロード状態に応じてラベルを出し分けるボタン
+    @ViewBuilder
+    private var downloadButton: some View {
+        let record = DownloadManager.record(for: video.videoId, in: modelContext)
+        if record?.state == .completed {
+            Button {} label: {
+                Label("ダウンロード済み", systemImage: "arrow.down.circle.fill")
+            }
+            .disabled(true)
+        } else if DownloadManager.shared.isDownloading(video.videoId) || record?.state == .downloading {
+            Button {} label: {
+                Label("ダウンロード中…", systemImage: "arrow.down.circle.dotted")
+            }
+            .disabled(true)
+        } else {
+            Button {
+                DownloadManager.shared.startDownload(video: video, modelContext: modelContext)
+            } label: {
+                Label("ダウンロード", systemImage: "arrow.down.circle")
             }
         }
     }
