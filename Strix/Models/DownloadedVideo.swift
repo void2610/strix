@@ -19,7 +19,7 @@ enum DownloadState: Int, Codable, Sendable {
 }
 
 /// オフライン再生用にローカル保存した動画を表すモデル。
-/// 動画ファイル・サムネイルは Application Support/Downloads に保存し、
+/// 動画ファイル・サムネイルは Application Support/StrixDownloads に保存し、
 /// 絶対パスはアプリ再インストールで無効化するため相対ファイル名だけを保持する。
 @Model
 final class DownloadedVideo {
