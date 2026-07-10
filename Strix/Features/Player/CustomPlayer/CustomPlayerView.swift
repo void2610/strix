@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import SwiftData
 
 /// YouTube 風のカスタムプレイヤー本体。
 /// AVPlayerLayer で映像を描画し、SwiftUI でオーバーレイコントロールを重ねる。
@@ -30,6 +31,7 @@ struct CustomPlayerView: View {
     var isFullScreen: Bool = false
 
     @Environment(PlayerCoordinator.self) private var coordinator
+    @Environment(\.modelContext) private var modelContext
 
     @State private var controller = PlayerOverlayController()
     @State private var currentTime: Double = 0
@@ -505,6 +507,9 @@ struct CustomPlayerView: View {
 
             Divider()
 
+            // ダウンロード（状態に応じてラベルを出し分ける）
+            downloadMenuItem
+
             // 共有
             if let url = URL(string: "https://youtu.be/\(videoID)") {
                 ShareLink(item: url) {
@@ -520,6 +525,26 @@ struct CustomPlayerView: View {
         }
         // Menu を開いている間はオーバーレイを消したくない（Menu を開いた瞬間に親が消えると Menu も閉じる）
         // SwiftUI Menu は開閉フックがないので、Picker/Toggle/Button 各アクションで bumpFade を呼ぶ
+    }
+
+    /// 再生中の動画をオフライン保存するメニュー項目。状態に応じて出し分ける。
+    @ViewBuilder
+    private var downloadMenuItem: some View {
+        if let video = vm.currentVideoItem {
+            let record = DownloadManager.record(for: video.videoId, in: modelContext)
+            if let record, DownloadManager.isPlayableOffline(record) {
+                Label("ダウンロード済み", systemImage: "arrow.down.circle.fill")
+            } else if DownloadManager.shared.isDownloading(video.videoId) || record?.state == .downloading {
+                Label("ダウンロード中…", systemImage: "arrow.down.circle.dotted")
+            } else {
+                Button {
+                    DownloadManager.shared.startDownload(video: video, modelContext: modelContext)
+                    controller.bumpFade()
+                } label: {
+                    Label("ダウンロード", systemImage: "arrow.down.circle")
+                }
+            }
+        }
     }
 
     // MARK: - ViewModel バインディング
