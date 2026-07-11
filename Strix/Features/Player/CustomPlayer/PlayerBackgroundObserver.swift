@@ -19,11 +19,14 @@ final class PlayerBackgroundObserver: NSObject {
     /// 対象の UIView（AVPlayerLayer を持つ）
     weak var layerView: PlayerLayerUIView?
     private let player: AVPlayer
+    /// true を返す間はバックグラウンドで detach せず、PiP に映像継続を委ねる
+    private let pipHandlesBackground: (() -> Bool)?
     /// バックグラウンド移行時に再生中だったか（復帰時の再開判定用）
     private var wasPlaying = false
 
-    init(player: AVPlayer) {
+    init(player: AVPlayer, pipHandlesBackground: (() -> Bool)? = nil) {
         self.player = player
+        self.pipHandlesBackground = pipHandlesBackground
         super.init()
         NotificationCenter.default.addObserver(
             self,
@@ -44,6 +47,8 @@ final class PlayerBackgroundObserver: NSObject {
     }
 
     @objc private func didEnterBackground() {
+        // PiP が映像継続を担う場合は detach せず、自動 PiP に委ねる
+        if pipHandlesBackground?() == true { return }
         wasPlaying = player.rate > 0
         // layer から切り離して iOS の自動停止を回避
         layerView?.detachPlayer()
