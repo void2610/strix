@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import UIKit
 import SwiftData
 
 /// YouTube 風のカスタムプレイヤー本体。
@@ -41,6 +42,17 @@ struct CustomPlayerView: View {
     @State private var scrubPreviewTime: Double? = nil
     /// ダブルタップスキップの波紋エフェクト
     @State private var skipRipple: SkipRipple? = nil
+
+    /// 音量/明るさ調整の HUD（フルスクリーン時の縦ドラッグで表示）
+    @State private var adjustHUD: AdjustHUD? = nil
+    /// システム音量コントローラ（非表示 MPVolumeView 経由）
+    @State private var volumeController = SystemVolumeController()
+    /// 縦ドラッグ開始時の音量（右側ドラッグ用）
+    @State private var dragStartVolume: Float? = nil
+    /// 縦ドラッグ開始時の明るさ（左側ドラッグ用）
+    @State private var dragStartBrightness: CGFloat? = nil
+    /// HUD 自動消去タスクのトークン
+    @State private var adjustHUDDismissID: UUID? = nil
 
     /// PeriodicTimeObserver 解除用トークン
     @State private var timeObserverToken: Any?
@@ -92,6 +104,11 @@ struct CustomPlayerView: View {
                     .scaleEffect(1.3)
                     .allowsHitTesting(false)
             }
+
+            // MARK: システム音量制御用の非表示 MPVolumeView
+            SystemVolumeHost(controller: volumeController)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
         }
         .environment(controller)
         .onAppear { setup() }
@@ -124,11 +141,12 @@ struct CustomPlayerView: View {
     // MARK: - ダブルタップスキップ
 
     /// 左半分 = -10秒、右半分 = +10秒。シングルタップはオーバーレイ表示切替に割り当てる。
+    /// フルスクリーン時は縦ドラッグで左=明るさ / 右=音量を調整する。
     private var doubleTapSkipLayer: some View {
         GeometryReader { geo in
             HStack(spacing: 0) {
-                skipHalfArea(side: .left, width: geo.size.width / 2)
-                skipHalfArea(side: .right, width: geo.size.width / 2)
+                skipHalfArea(side: .left, width: geo.size.width / 2, height: geo.size.height)
+                skipHalfArea(side: .right, width: geo.size.width / 2, height: geo.size.height)
             }
             .overlay {
                 if let ripple = skipRipple {
@@ -137,10 +155,21 @@ struct CustomPlayerView: View {
                         .id(ripple.triggerID)
                 }
             }
+            .overlay {
+                if let hud = adjustHUD {
+                    // 明るさ（左ドラッグ）は左、音量（右ドラッグ）は右に寄せる
+                    AdjustHUDView(hud: hud)
+                        .transition(.opacity)
+                        .id(hud.kind)
+                        .frame(maxWidth: .infinity,
+                               alignment: hud.kind == .brightness ? .leading : .trailing)
+                        .padding(.horizontal, 20)
+                }
+            }
         }
     }
 
-    private func skipHalfArea(side: SkipSide, width: CGFloat) -> some View {
+    private func skipHalfArea(side: SkipSide, width: CGFloat, height: CGFloat) -> some View {
         Color.clear
             .frame(width: width)
             .contentShape(Rectangle())
@@ -153,6 +182,74 @@ struct CustomPlayerView: View {
             .onTapGesture {
                 controller.tapped()
             }
+            // フルスクリーン時のみ縦ドラッグを有効化（左=明るさ、右=音量）
+            // 非フルスクリーン時は .subviews にして親のドラッグ（下スワイプで最小化）を優先する
+            .gesture(
+                verticalAdjustDrag(side: side, height: height),
+                including: isFullScreen ? .all : .subviews
+            )
+    }
+
+    // MARK: - 音量/明るさ 縦ドラッグ
+
+    /// 左側 = 明るさ、右側 = 音量。上へドラッグで増加、下へドラッグで減少。
+    /// 画面の高さいっぱいのドラッグで 0→1 になるよう正規化する。
+    private func verticalAdjustDrag(side: SkipSide, height: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                // 縦方向が横方向より優勢な場合のみ調整とみなす（横スワイプの誤爆防止）
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                let span = max(height, 1)
+                let delta = Double(-value.translation.height / span)
+
+                if side == .right {
+                    let start = dragStartVolume ?? volumeController.currentVolume
+                    if dragStartVolume == nil { dragStartVolume = start }
+                    let newValue = min(max(Double(start) + delta, 0), 1)
+                    volumeController.setVolume(Float(newValue))
+                    showAdjustHUD(kind: .volume, value: newValue)
+                } else {
+                    let start = dragStartBrightness ?? UIScreen.main.brightness
+                    if dragStartBrightness == nil { dragStartBrightness = start }
+                    let newValue = min(max(start + CGFloat(delta), 0), 1)
+                    UIScreen.main.brightness = newValue
+                    showAdjustHUD(kind: .brightness, value: Double(newValue))
+                }
+            }
+            .onEnded { _ in
+                dragStartVolume = nil
+                dragStartBrightness = nil
+                scheduleAdjustHUDDismiss()
+            }
+    }
+
+    /// HUD を更新表示する
+    private func showAdjustHUD(kind: AdjustKind, value: Double) {
+        // 種類が変わった時のみアニメーションで切り替え、同一種類の連続更新は即時反映
+        if adjustHUD?.kind != kind {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                adjustHUD = AdjustHUD(kind: kind, value: value)
+            }
+        } else {
+            adjustHUD?.value = value
+        }
+        adjustHUDDismissID = nil
+    }
+
+    /// ドラッグ終了後、一定時間で HUD を消す
+    private func scheduleAdjustHUDDismiss() {
+        let token = UUID()
+        adjustHUDDismissID = token
+        Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            await MainActor.run {
+                guard adjustHUDDismissID == token else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    adjustHUD = nil
+                }
+                adjustHUDDismissID = nil
+            }
+        }
     }
 
     private func triggerRipple(side: SkipSide, amount: Int) {
