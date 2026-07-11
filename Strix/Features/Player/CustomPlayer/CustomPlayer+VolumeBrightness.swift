@@ -70,8 +70,6 @@ struct AdjustHUD: Equatable {
     var kind: AdjustKind
     /// 0...1 の現在値
     var value: Double
-    /// 再表示・再アニメーション用の id
-    var triggerID: UUID = UUID()
 }
 
 /// ドラッグ中に表示する音量/明るさインジケータ
