@@ -157,9 +157,13 @@ struct CustomPlayerView: View {
             }
             .overlay {
                 if let hud = adjustHUD {
+                    // 明るさ（左ドラッグ）は左、音量（右ドラッグ）は右に寄せる
                     AdjustHUDView(hud: hud)
                         .transition(.opacity)
                         .id(hud.kind)
+                        .frame(maxWidth: .infinity,
+                               alignment: hud.kind == .brightness ? .leading : .trailing)
+                        .padding(.horizontal, 20)
                 }
             }
         }
