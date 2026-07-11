@@ -34,10 +34,9 @@ final class SystemVolumeController {
     /// システム音量を設定する（0...1 にクランプ）
     func setVolume(_ value: Float) {
         let clamped = min(max(value, 0), 1)
-        // UISlider.value への代入は次の runloop で反映されるため、明示的に UI スレッドで実行する
-        let target = slider
-        DispatchQueue.main.async {
-            target?.value = clamped
+        // MPVolumeView の UISlider は次の runloop で subviews に揃うことがあるため、実行時に都度取得する
+        Task { @MainActor in
+            self.slider?.value = clamped
         }
     }
 }
