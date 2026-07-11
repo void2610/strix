@@ -34,7 +34,7 @@ struct CustomPlayerView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var controller = PlayerOverlayController()
-    @State private var pipManager = PiPManager()
+    @State private var pipManager = PlayerPiPController()
     @State private var currentTime: Double = 0
     @State private var duration: Double = 0
     @State private var isPlaying: Bool = false

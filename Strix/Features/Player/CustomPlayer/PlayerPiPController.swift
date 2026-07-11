@@ -12,7 +12,7 @@ import AVKit
 /// バックグラウンド移行時の自動 PiP と、手動ボタンからの開始/停止に対応する。
 @MainActor
 @Observable
-final class PiPManager: NSObject, AVPictureInPictureControllerDelegate {
+final class PlayerPiPController: NSObject, AVPictureInPictureControllerDelegate {
     private(set) var isSupported = AVPictureInPictureController.isPictureInPictureSupported()
     /// PiP 実行中か（ボタンのアイコン切替に使う）
     private(set) var isActive = false
@@ -22,11 +22,11 @@ final class PiPManager: NSObject, AVPictureInPictureControllerDelegate {
     /// AVPlayerLayer 生成後に PiP コントローラを構築する。同一 layer に対しては再構築しない。
     func configure(with layer: AVPlayerLayer) {
         guard isSupported, controller?.playerLayer !== layer else { return }
-        let controller = AVPictureInPictureController(playerLayer: layer)
-        controller?.delegate = self
+        guard let pipController = AVPictureInPictureController(playerLayer: layer) else { return }
+        pipController.delegate = self
         // アプリがバックグラウンドへ移行した際に自動で PiP を開始する
-        controller?.canStartPictureInPictureAutomaticallyFromInline = true
-        self.controller = controller
+        pipController.canStartPictureInPictureAutomaticallyFromInline = true
+        controller = pipController
     }
 
     /// 手動 PiP ボタンから呼ぶ。実行中なら停止、そうでなければ開始する。
