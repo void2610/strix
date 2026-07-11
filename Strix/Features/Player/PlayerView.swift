@@ -581,10 +581,9 @@ struct PlayerView: View {
                     }
                 }
 
-                // コメント本文
-                Text(comment.contentText)
-                    .font(isReply ? .caption : .subheadline)
-                    .lineLimit(4)
+                // コメント本文（タップで全文展開）
+                ExpandableCommentText(text: comment.contentText,
+                                      font: isReply ? .caption : .subheadline)
 
                 // 高評価数
                 if let likes = comment.likeCountText, !likes.isEmpty {
@@ -647,6 +646,67 @@ struct PlayerView: View {
                     .padding(.top, 20)
             }
         }
+    }
+}
+
+// MARK: - コメント本文（展開可能）
+
+/// コメント本文。既定は4行で折りたたみ、切り詰めが起きる場合のみタップで全文展開できる。
+private struct ExpandableCommentText: View {
+    let text: String
+    let font: Font
+    private let collapsedLimit = 4
+
+    @State private var expanded = false
+    @State private var truncated = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(text)
+                .font(font)
+                .lineLimit(expanded ? nil : collapsedLimit)
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    ZStack {
+                        heightProbe(lineLimit: collapsedLimit, isFull: false)
+                        heightProbe(lineLimit: nil, isFull: true)
+                    }
+                    .hidden()
+                }
+                .onPreferenceChange(CommentHeightKey.self) { heights in
+                    truncated = (heights[true] ?? 0) > (heights[false] ?? 0) + 1
+                }
+
+            if truncated {
+                Text(expanded ? "閉じる" : "続きを読む")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard truncated else { return }
+            withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+        }
+    }
+
+    private func heightProbe(lineLimit: Int?, isFull: Bool) -> some View {
+        Text(text)
+            .font(font)
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { geo in
+                Color.clear.preference(key: CommentHeightKey.self, value: [isFull: geo.size.height])
+            })
+    }
+}
+
+private struct CommentHeightKey: PreferenceKey {
+    static let defaultValue: [Bool: CGFloat] = [:]
+    static func reduce(value: inout [Bool: CGFloat], nextValue: () -> [Bool: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 
