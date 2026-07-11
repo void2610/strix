@@ -34,6 +34,7 @@ struct CustomPlayerView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var controller = PlayerOverlayController()
+    @State private var pipManager = PlayerPiPController()
     @State private var currentTime: Double = 0
     @State private var duration: Double = 0
     @State private var isPlaying: Bool = false
@@ -68,7 +69,11 @@ struct CustomPlayerView: View {
             // MARK: 映像
             if let player {
                 // バックグラウンド自動停止回避は PlayerLayerView 内部の Coordinator で完結
-                PlayerLayerView(player: player)
+                PlayerLayerView(
+                    player: player,
+                    onLayerReady: { pipManager.configure(with: $0) },
+                    pipHandlesBackground: { pipManager.isSupported && pipManager.isPossible && !vm.isAudioOnly }
+                )
 
                 // 音声のみモード: 映像トラックがない（またはフォールバックの低画質映像）ため
                 // 代わりにサムネイルを表示する
@@ -507,6 +512,17 @@ struct CustomPlayerView: View {
             // 音声のみ
             Toggle(isOn: audioOnlyBinding) {
                 Label("音声のみ", systemImage: vm.isAudioOnly ? "speaker.wave.2.fill" : "video.fill")
+            }
+
+            // PiP（音声のみモード・非対応端末では非表示）
+            if pipManager.isSupported && !vm.isAudioOnly {
+                Button {
+                    pipManager.toggle()
+                    controller.bumpFade()
+                } label: {
+                    Label(pipManager.isActive ? "PiP を終了" : "ピクチャインピクチャ",
+                          systemImage: pipManager.isActive ? "pip.exit" : "pip.enter")
+                }
             }
 
             Divider()

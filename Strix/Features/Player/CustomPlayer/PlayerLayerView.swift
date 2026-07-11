@@ -33,9 +33,13 @@ final class PlayerLayerUIView: UIView {
 /// SwiftUI の @State 更新タイミング問題（makeUIView 中の State 代入が次回 body 評価まで反映されない）を回避する。
 struct PlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
+    /// AVPlayerLayer 生成/差し替え時に通知する（PiP コントローラ構築用）
+    var onLayerReady: ((AVPlayerLayer) -> Void)? = nil
+    /// true を返す間はバックグラウンドで detach せず、PiP に映像継続を委ねる
+    var pipHandlesBackground: (() -> Bool)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(player: player)
+        Coordinator(player: player, pipHandlesBackground: pipHandlesBackground)
     }
 
     func makeUIView(context: Context) -> PlayerLayerUIView {
@@ -44,6 +48,7 @@ struct PlayerLayerView: UIViewRepresentable {
         view.attach(player: player)
         // makeUIView 時点で確実に observer に view を紐付ける
         context.coordinator.bind(layerView: view)
+        onLayerReady?(view.playerLayer)
         return view
     }
 
@@ -55,16 +60,19 @@ struct PlayerLayerView: UIViewRepresentable {
         if uiView.playerLayer.player !== player {
             uiView.attach(player: player)
         }
+        onLayerReady?(uiView.playerLayer)
     }
 
     /// AVPlayerLayer の UIView 参照と、バックグラウンド再生継続用 observer を保持する。
     final class Coordinator {
         private(set) var currentPlayer: AVPlayer
         private var observer: PlayerBackgroundObserver
+        private let pipHandlesBackground: (() -> Bool)?
 
-        init(player: AVPlayer) {
+        init(player: AVPlayer, pipHandlesBackground: (() -> Bool)?) {
             self.currentPlayer = player
-            self.observer = PlayerBackgroundObserver(player: player)
+            self.pipHandlesBackground = pipHandlesBackground
+            self.observer = PlayerBackgroundObserver(player: player, pipHandlesBackground: pipHandlesBackground)
         }
 
         /// makeUIView の時点で layer view を observer に紐付ける。
@@ -75,7 +83,7 @@ struct PlayerLayerView: UIViewRepresentable {
         /// player が別のインスタンスに切り替わった際に observer を再生成する。
         func rebind(player: AVPlayer, layerView: PlayerLayerUIView) {
             self.currentPlayer = player
-            self.observer = PlayerBackgroundObserver(player: player)
+            self.observer = PlayerBackgroundObserver(player: player, pipHandlesBackground: pipHandlesBackground)
             self.observer.layerView = layerView
         }
     }
