@@ -16,8 +16,11 @@ final class PlayerPiPController: NSObject, AVPictureInPictureControllerDelegate 
     private(set) var isSupported = AVPictureInPictureController.isPictureInPictureSupported()
     /// PiP 実行中か（ボタンのアイコン切替に使う）
     private(set) var isActive = false
+    /// PiP を実際に開始できる状態か（映像トラック・layer 準備が整っているか）
+    private(set) var isPossible = false
 
     @ObservationIgnored private var controller: AVPictureInPictureController?
+    @ObservationIgnored private var possibleObservation: NSKeyValueObservation?
 
     /// AVPlayerLayer 生成後に PiP コントローラを構築する。同一 layer に対しては再構築しない。
     func configure(with layer: AVPlayerLayer) {
@@ -26,6 +29,10 @@ final class PlayerPiPController: NSObject, AVPictureInPictureControllerDelegate 
         pipController.delegate = self
         // アプリがバックグラウンドへ移行した際に自動で PiP を開始する
         pipController.canStartPictureInPictureAutomaticallyFromInline = true
+        possibleObservation = pipController.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] observed, _ in
+            let possible = observed.isPictureInPicturePossible
+            Task { @MainActor in self?.isPossible = possible }
+        }
         controller = pipController
     }
 

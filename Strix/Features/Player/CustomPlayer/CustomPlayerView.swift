@@ -72,7 +72,7 @@ struct CustomPlayerView: View {
                 PlayerLayerView(
                     player: player,
                     onLayerReady: { pipManager.configure(with: $0) },
-                    pipHandlesBackground: { pipManager.isSupported && !vm.isAudioOnly }
+                    pipHandlesBackground: { pipManager.isSupported && pipManager.isPossible && !vm.isAudioOnly }
                 )
 
                 // 音声のみモード: 映像トラックがない（またはフォールバックの低画質映像）ため
