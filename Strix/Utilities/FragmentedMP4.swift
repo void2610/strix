@@ -76,15 +76,18 @@ enum FragmentedMP4 {
             let type = String(decoding: bytes[(offset + 4)..<(offset + 8)], as: UTF8.self)
             var headerSize = 8
             if size == 1 {
-                guard offset + 16 <= limit else { break }
-                size = Int(readUInt(bytes, at: offset + 8, length: 8))
+                // サイズはネットワーク由来の値なので、Int に収まらない・加算で桁あふれする壊れた値は解析不能として打ち切る
+                guard offset + 16 <= limit, let largeSize = Int(exactly: readUInt(bytes, at: offset + 8, length: 8)) else { break }
+                size = largeSize
                 headerSize = 16
             } else if size == 0 {
                 size = to - offset
             }
             guard size >= headerSize else { break }
-            result.append(Box(type: type, bodyStart: offset + headerSize, end: offset + size))
-            offset += size
+            let (end, overflow) = offset.addingReportingOverflow(size)
+            guard !overflow else { break }
+            result.append(Box(type: type, bodyStart: offset + headerSize, end: end))
+            offset = end
         }
         return result
     }

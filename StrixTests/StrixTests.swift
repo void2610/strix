@@ -2711,6 +2711,26 @@ struct FragmentedMP4Tests {
         expectOnlyFieldsZeroed(original: later, patched: patched, ranges: ranges, offset: Int64(laterStart))
     }
 
+    /// 64 ビット拡張サイズの box（size フィールドが 1）を組み立てる
+    private func largeBox(_ type: String, size: UInt64, _ body: [UInt8] = []) -> [UInt8] {
+        u32(1) + Array(type.utf8) + u64(size) + body
+    }
+
+    /// Int に収まらない、または位置との加算で桁あふれする壊れたサイズでもクラッシュせず解析不能になること
+    @Test func treatsOverflowingBoxSizesAsUnparseable() {
+        let ftyp = box("ftyp", Array("dash".utf8) + u32(0))
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(ftyp + largeBox("moov", size: .max))) == nil)
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(ftyp + largeBox("free", size: UInt64(Int.max)))) == nil)
+    }
+
+    /// moov の内側に壊れたサイズの box があってもクラッシュしないこと
+    @Test func toleratesOverflowingBoxSizeInsideMoov() {
+        let mvex = box("mvex", box("trex", [UInt8](repeating: 0, count: 24)))
+        let moov = box("moov", mvex + largeBox("trak", size: UInt64(Int.max), [UInt8](repeating: 0, count: 16)))
+        let file = box("ftyp", Array("dash".utf8) + u32(0)) + moov
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(file)) == [])
+    }
+
     /// 通常の MP4 は一切書き換えないこと
     @Test func correctorLeavesNonFragmentedMP4Untouched() {
         let file = makeFile(fragmented: false)
