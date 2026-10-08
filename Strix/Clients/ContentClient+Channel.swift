@@ -112,8 +112,7 @@ extension ContentClient {
               index < rows.count,
               let parts = rows[index]["metadataParts"] as? [[String: Any]],
               let firstPart = parts.first,
-              let text = (firstPart["text"] as? [String: Any])?["content"] as? String
-        else { return nil }
+              let text = (firstPart["text"] as? [String: Any])?["content"] as? String else { return nil }
         return text
     }
 

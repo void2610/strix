@@ -119,7 +119,6 @@ final class HomeViewModel {
         allPlaylists = items
         refilterPlaylists(modelContext: modelContext)
     }
-
 }
 
 // MARK: - View

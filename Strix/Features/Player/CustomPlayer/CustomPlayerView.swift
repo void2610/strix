@@ -701,4 +701,3 @@ struct CustomPlayerView: View {
         itemBufferObservation = nil
     }
 }
-

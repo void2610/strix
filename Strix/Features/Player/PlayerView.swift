@@ -41,62 +41,62 @@ struct PlayerView: View {
 
             // 下部コンテンツ（動画の後ろをスクロール）。フルスクリーン中は非表示
             if !isFullScreen {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                // 再生キューインジケータ（N/M 表示。タップでキュー一覧を開く）
-                if !vm.playlistQueue.isEmpty, !vm.isLoadingStream, vm.streamError == nil {
-                    Button {
-                        showQueue = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "list.and.film")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("再生キュー  \(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // 再生キューインジケータ（N/M 表示。タップでキュー一覧を開く）
+                        if !vm.playlistQueue.isEmpty, !vm.isLoadingStream, vm.streamError == nil {
+                            Button {
+                                showQueue = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "list.and.film")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("再生キュー  \(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
+
+                        if vm.isLoadingStream {
+                            // ローディング中はタイトルスケルトン
+                            skeletonTitle
+                        } else if let info = vm.videoInfo {
+                            // タイトル・チャンネル情報
+                            videoMeta(info: info)
+                        }
+
+                        Divider()
+                            .padding(.top, 8)
+
+                        // コメント
+                        commentsSection
+
+                        Divider()
+                            .padding(.top, 8)
+
+                        // 関連動画
+                        if disableRecommendations {
+                            ContentUnavailableView(
+                                "関連動画はオフです",
+                                systemImage: "eye.slash",
+                                description: Text("おすすめ動画の表示は設定で無効にされています")
+                            )
+                            .padding(.top, 12)
+                        } else {
+                            relatedSection
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
-
-                if vm.isLoadingStream {
-                    // ローディング中はタイトルスケルトン
-                    skeletonTitle
-                } else if let info = vm.videoInfo {
-                    // タイトル・チャンネル情報
-                    videoMeta(info: info)
-                }
-
-                Divider()
-                    .padding(.top, 8)
-
-                // コメント
-                commentsSection
-
-                Divider()
-                    .padding(.top, 8)
-
-                // 関連動画
-                if disableRecommendations {
-                    ContentUnavailableView(
-                        "関連動画はオフです",
-                        systemImage: "eye.slash",
-                        description: Text("おすすめ動画の表示は設定で無効にされています")
-                    )
-                    .padding(.top, 12)
-                } else {
-                    relatedSection
-                }
-            }
-            }
             } // if !isFullScreen
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -813,8 +813,6 @@ final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControlle
         isPiPActive = false
     }
 }
-
-
 
 // MARK: - 共有シート
 
