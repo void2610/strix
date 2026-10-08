@@ -753,6 +753,19 @@ struct YouTubeClientTests {
         #expect(duration.seconds > 0)
     }
 
+    /// 音声のみモードの尺が実際の長さと一致すること（DASH 音声は補正しないと約 2 倍に解釈される）
+    @MainActor
+    @Test func audioOnlyItemReportsActualDuration() async throws {
+        let info = try await YouTubeClient.live.fetchVideo("9bZkp7q19f0")
+        let audioURL = try #require(info.audioOnlyURL)
+        let expected = try #require(URLComponents(url: audioURL, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "dur" }?.value.flatMap { Double($0) })
+        let vm = PlayerViewModel(youtubeClient: .live, contentClient: .mock())
+        let item = vm.makePlayerItem(info: info, audioOnly: true)
+        let duration = try await item.asset.load(.duration).seconds
+        #expect(abs(duration - expected) < 1, "尺 \(duration) 秒が実際の \(expected) 秒と一致しない")
+    }
+
     /// HLS マスターの最初のバリアントを辿り、末尾セグメントの URL を返す
     private static func lastSegmentURL(ofMaster master: URL) async throws -> URL? {
         func uriLines(_ url: URL) async throws -> [String] {
@@ -2588,6 +2601,142 @@ struct PlayerViewModelAudioOnlyTests {
         let item = vm.makePlayerItem(info: makeInfo(audioURL: audio), audioOnly: false)
         #expect((item.asset as? AVURLAsset)?.url.absoluteString == "https://example.com/video.m3u8")
         #expect(item.preferredPeakBitRate == 0)
+    }
+}
+
+// MARK: - 断片化 MP4 の duration 補正テスト
+
+struct FragmentedMP4Tests {
+
+    private let durationValue: UInt32 = 27_986_944
+
+    private func u32(_ v: UInt32) -> [UInt8] { withUnsafeBytes(of: v.bigEndian, Array.init) }
+    private func u64(_ v: UInt64) -> [UInt8] { withUnsafeBytes(of: v.bigEndian, Array.init) }
+
+    private func box(_ type: String, _ body: [UInt8]) -> [UInt8] {
+        u32(UInt32(8 + body.count)) + Array(type.utf8) + body
+    }
+
+    /// YouTube の DASH と同じく、空の moov の mvhd / tkhd / mdhd に全体の長さが入ったファイルを組み立てる
+    private func makeFile(fragmented: Bool = true, mvhdVersion1: Bool = false) -> [UInt8] {
+        let mvhd = mvhdVersion1
+            ? box("mvhd", [1, 0, 0, 0] + u64(0) + u64(0) + u32(44_100) + u64(UInt64(durationValue)) + [UInt8](repeating: 0, count: 80))
+            : box("mvhd", [0, 0, 0, 0] + u32(0) + u32(0) + u32(44_100) + u32(durationValue) + [UInt8](repeating: 0, count: 80))
+        let tkhd = box("tkhd", [0, 0, 0, 3] + u32(0) + u32(0) + u32(1) + u32(0) + u32(durationValue) + [UInt8](repeating: 0, count: 60))
+        let mdhd = box("mdhd", [0, 0, 0, 0] + u32(0) + u32(0) + u32(44_100) + u32(durationValue) + [0, 0, 0, 0])
+        let mvex = fragmented ? box("mvex", box("trex", [UInt8](repeating: 0, count: 24))) : []
+        let moov = box("moov", mvhd + mvex + box("trak", tkhd + box("mdia", mdhd)))
+        return box("ftyp", Array("dash".utf8) + u32(0)) + moov + box("mdat", [1, 2, 3, 4])
+    }
+
+    /// 全体の長さ（durationValue）が残っている箇所の数を数える
+    private func remainingDurationCount(in bytes: [UInt8]) -> Int {
+        let pattern = u32(durationValue)
+        return (0...(bytes.count - pattern.count)).filter { Array(bytes[$0..<($0 + pattern.count)]) == pattern }.count
+    }
+
+    /// ranges に含まれるバイトだけが 0 になり、それ以外は元のままであること
+    private func expectOnlyFieldsZeroed(original: [UInt8], patched: [UInt8], ranges: [Range<Int64>], offset: Int64) {
+        #expect(patched.count == original.count)
+        for i in original.indices {
+            let absolute = offset + Int64(i)
+            if ranges.contains(where: { $0.contains(absolute) }) {
+                #expect(patched[i] == 0)
+            } else {
+                #expect(patched[i] == original[i])
+            }
+        }
+    }
+
+    @Test func zeroesMoovDurationsOfFragmentedMP4() throws {
+        let file = makeFile()
+        let ranges = try #require(FragmentedMP4.durationFieldRanges(inHeader: Data(file)))
+        let patched = [UInt8](FragmentedMP4.zeroing(ranges, in: Data(file), at: 0))
+        #expect(remainingDurationCount(in: file) == 3)
+        #expect(remainingDurationCount(in: patched) == 0)
+        expectOnlyFieldsZeroed(original: file, patched: patched, ranges: ranges, offset: 0)
+    }
+
+    @Test func zeroesVersion1DurationAsEightBytes() throws {
+        let file = makeFile(mvhdVersion1: true)
+        let ranges = try #require(FragmentedMP4.durationFieldRanges(inHeader: Data(file)))
+        #expect(ranges.contains { $0.count == 8 })
+        let patched = [UInt8](FragmentedMP4.zeroing(ranges, in: Data(file), at: 0))
+        #expect(remainingDurationCount(in: patched) == 0)
+    }
+
+    /// 通常の MP4 は moov の duration が尺そのものなので書き換えないこと
+    @Test func leavesNonFragmentedMP4Untouched() throws {
+        let file = makeFile(fragmented: false)
+        let ranges = try #require(FragmentedMP4.durationFieldRanges(inHeader: Data(file)))
+        #expect(ranges.isEmpty)
+    }
+
+    /// moov が途中で切れたヘッダでは判定を保留すること（先頭 2 バイトだけの応答で「対象外」と確定させない）
+    @Test func returnsNilWhenMoovIsTruncated() {
+        let file = makeFile()
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(file.prefix(2))) == nil)
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(file.prefix(60))) == nil)
+    }
+
+    /// 先頭以外から始まる応答でも、重なる部分だけを 0 にすること
+    @Test func zeroesOnlyOverlappingBytesOfLaterChunk() throws {
+        let file = makeFile()
+        let ranges = try #require(FragmentedMP4.durationFieldRanges(inHeader: Data(file)))
+        let field = try #require(ranges.first)
+        let chunkStart = Int(field.lowerBound) + 2
+        let chunk = Array(file[chunkStart...])
+        let patched = [UInt8](FragmentedMP4.zeroing(ranges, in: Data(chunk), at: Int64(chunkStart)))
+        expectOnlyFieldsZeroed(original: chunk, patched: patched, ranges: ranges, offset: Int64(chunkStart))
+    }
+
+    /// AVFoundation の最初の 2 バイトの問い合わせで判定を確定させず、続くファイル先頭からの応答で補正を始めること
+    @Test func correctorWaitsForHeaderThenCorrects() throws {
+        let file = makeFile()
+        var corrector = FragmentedMP4.DurationCorrector()
+        #expect([UInt8](corrector.correct(Data(file.prefix(2)), at: 0)) == Array(file.prefix(2)))
+        let patched = [UInt8](corrector.correct(Data(file), at: 0))
+        #expect(remainingDurationCount(in: patched) == 0)
+    }
+
+    /// 先頭の応答で特定した範囲を、後から届く別 Range の応答にも適用すること
+    @Test func correctorAppliesRangesToLaterResponses() throws {
+        let file = makeFile()
+        let ranges = try #require(FragmentedMP4.durationFieldRanges(inHeader: Data(file)))
+        var corrector = FragmentedMP4.DurationCorrector()
+        _ = corrector.correct(Data(file), at: 0)
+        let laterStart = Int(try #require(ranges.last).lowerBound) - 1
+        let later = Array(file[laterStart...])
+        let patched = [UInt8](corrector.correct(Data(later), at: Int64(laterStart)))
+        expectOnlyFieldsZeroed(original: later, patched: patched, ranges: ranges, offset: Int64(laterStart))
+    }
+
+    /// 64 ビット拡張サイズの box（size フィールドが 1）を組み立てる
+    private func largeBox(_ type: String, size: UInt64, _ body: [UInt8] = []) -> [UInt8] {
+        u32(1) + Array(type.utf8) + u64(size) + body
+    }
+
+    /// Int に収まらない、または位置との加算で桁あふれする壊れたサイズでもクラッシュせず解析不能になること
+    @Test func treatsOverflowingBoxSizesAsUnparseable() {
+        let ftyp = box("ftyp", Array("dash".utf8) + u32(0))
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(ftyp + largeBox("moov", size: .max))) == nil)
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(ftyp + largeBox("free", size: UInt64(Int.max)))) == nil)
+    }
+
+    /// moov の内側に壊れたサイズの box があってもクラッシュしないこと
+    @Test func toleratesOverflowingBoxSizeInsideMoov() {
+        let mvex = box("mvex", box("trex", [UInt8](repeating: 0, count: 24)))
+        let moov = box("moov", mvex + largeBox("trak", size: UInt64(Int.max), [UInt8](repeating: 0, count: 16)))
+        let file = box("ftyp", Array("dash".utf8) + u32(0)) + moov
+        #expect(FragmentedMP4.durationFieldRanges(inHeader: Data(file)) == [])
+    }
+
+    /// 通常の MP4 は一切書き換えないこと
+    @Test func correctorLeavesNonFragmentedMP4Untouched() {
+        let file = makeFile(fragmented: false)
+        var corrector = FragmentedMP4.DurationCorrector()
+        #expect([UInt8](corrector.correct(Data(file), at: 0)) == file)
+        #expect([UInt8](corrector.correct(Data(file.suffix(40)), at: Int64(file.count - 40))) == Array(file.suffix(40)))
     }
 }
 

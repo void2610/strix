@@ -29,6 +29,7 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
     private let lock = NSLock()
     private weak var _player: AVPlayer?
     private var _totalLength: Int64?
+    private var _durationCorrector = FragmentedMP4.DurationCorrector()
 
     private init(realURL: URL, userAgent: String) {
         self.realURL = realURL
@@ -62,6 +63,12 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
 
     private func setTotalLength(_ total: Int64) {
         lock.lock(); _totalLength = total; lock.unlock()
+    }
+
+    /// DASH 音声の尺が約 2 倍に解釈されないよう、moov の duration を 0 にしたバイト列を返す
+    private func correctingDuration(_ data: Data, at offset: Int64) -> Data {
+        lock.lock(); defer { lock.unlock() }
+        return _durationCorrector.correct(data, at: offset)
     }
 
     func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
@@ -105,7 +112,7 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
                     info.contentLength = http.expectedContentLength
                 }
             }
-            dataRequest.respond(with: data)
+            dataRequest.respond(with: correctingDuration(data, at: start))
             loadingRequest.finishLoading()
         } catch {
             loadingRequest.finishLoading(with: error)
