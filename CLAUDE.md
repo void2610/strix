@@ -45,6 +45,12 @@ xcodebuild test -project Strix.xcodeproj -scheme Strix \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -only-testing:StrixTests \
   2>&1 | grep -E "passed|failed|error:"
+
+# テストを 1 件だけ実行する（Swift Testing は末尾の () が必須。無いと 0 件実行のまま TEST SUCCEEDED になる）
+xcodebuild test -project Strix.xcodeproj -scheme Strix \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  '-only-testing:StrixTests/YouTubeClientTests/sabrVideoHLSIsFetchableToEnd()' \
+  2>&1 | grep -E "passed|failed|error:"
 ```
 
 ## 行動規則
