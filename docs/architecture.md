@@ -34,6 +34,10 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
 
 ANDROID_VR（1.65.10）は 2026-08-17 以降、itag18 を含む全フォーマットが 403 になったため再生経路から外した。それ以前から PO Token 未提示のストリームは「先頭約 1 分（2.5MB 前後）だけ取得でき、それより先の Range は 403」になっており、`/player` が URL を返しても再生が途中で止まる。ストリームの可否は URL の有無ではなく末尾まで取得できるかで判定する（`YouTubeClientTests` の結合テスト）。
 
+### 音声のみモード（StreamResourceLoader）
+
+音声のみモードは adaptive の AAC 音声（DASH の断片化 MP4）を `StreamResourceLoader` 経由で再生する。YouTube の DASH ファイルはサンプルを持たない moov の `mvhd` / `tkhd` / `mdhd` にも全体の長さを書いており、AVFoundation はそれを断片の合計に足して尺を約 2 倍（例: 634 秒 → 1269 秒）と解釈する。シークバーが倍の長さになり、実際の終端を過ぎても再生位置が進み続けて自動再生が遅れるため、ローダーが返すバイト列の moov の duration を 0 にして断片の合計だけで尺を数えさせている（`FragmentedMP4`）。moov に `mvex` が無い通常の MP4 は duration が尺そのものなので書き換えない。
+
 ### プレイリスト編集（ContentClient）
 
 Innertube `/browse/edit_playlist` エンドポイントで以下の操作を実行：
