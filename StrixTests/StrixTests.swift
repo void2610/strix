@@ -720,14 +720,25 @@ struct YouTubeClientTests {
             info.streamURL.absoluteString.contains("manifest"))
     }
 
-    /// SABR 移行済み動画でも、チェーン（android_vr フォールバック）が再生可能な直 URL を返すことを検証する。
-    /// 他の結合テストと同様、未認証環境（CI 等）ではネットワーク起因の flaky を避けるためスキップする。
-    @Test func sabrVideoReturnsPlayableStream() async throws {
-        guard AuthState.shared.cookieString != nil else { return }
+    /// SABR 移行済み動画でも HLS の末尾セグメントまで取得できること（URL の取得だけでは途中からの 403 を検出できない）
+    @Test func sabrVideoHLSIsFetchableToEnd() async throws {
         let info = try await YouTubeClient.live.fetchVideo("9bZkp7q19f0")
-        let s = info.streamURL.absoluteString
-        #expect(s.contains("googlevideo") || s.contains("manifest"),
-                "再生可能なストリーム URL でない: \(s.prefix(80))")
+        #expect(info.streamURL.absoluteString.contains("manifest"), "HLS でない: \(info.streamURL.absoluteString.prefix(80))")
+        let lastSegment = try #require(await Self.lastSegmentURL(ofMaster: info.streamURL))
+        let (_, response) = try await URLSession.shared.data(from: lastSegment)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    }
+
+    /// 音声のみモードの音声 URL も末尾まで取得できること（PO Token が要るクライアントの URL は先頭約 1 分より先が 403 になる）
+    @Test func sabrVideoAudioOnlyURLIsFetchableToEnd() async throws {
+        let info = try await YouTubeClient.live.fetchVideo("9bZkp7q19f0")
+        let audioURL = try #require(info.audioOnlyURL)
+        let clen = try #require(URLComponents(url: audioURL, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "clen" }?.value.flatMap { Int64($0) })
+        var request = URLRequest(url: audioURL)
+        request.setValue("bytes=\(max(0, clen - 1_048_576))-\(clen - 1)", forHTTPHeaderField: "Range")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 206)
     }
 
     /// 実ネットワークで取得した HLS ストリームが再生準備可能（asset の長さが取得できる）なこと。
@@ -740,6 +751,28 @@ struct YouTubeClientTests {
         let item = vm.makePlayerItem(info: info, audioOnly: false)
         let duration = try await item.asset.load(.duration)
         #expect(duration.seconds > 0)
+    }
+
+    /// HLS マスターの最初のバリアントを辿り、末尾セグメントの URL を返す
+    private static func lastSegmentURL(ofMaster master: URL) async throws -> URL? {
+        func uriLines(_ url: URL) async throws -> [String] {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init).filter { $0.hasPrefix("http") }
+        }
+        guard let variant = try await uriLines(master).first.flatMap(URL.init(string:)) else { return nil }
+        return try await uriLines(variant).last.flatMap(URL.init(string:))
+    }
+}
+
+// MARK: - YouTubeConstants テスト
+
+struct YouTubeConstantsTests {
+
+    /// VISIONOS の context は visitorData を含むこと（欠けると LOGIN_REQUIRED になる）
+    @Test func visionOSContextIncludesVisitorData() {
+        let client = YouTubeConstants.visionOSClientContext(visitorData: "VD")["client"] as? [String: Any]
+        #expect(client?["clientName"] as? String == "VISIONOS")
+        #expect(client?["visitorData"] as? String == "VD")
     }
 }
 
@@ -2423,10 +2456,30 @@ struct InnertubeRequestSessionTests {
 
 struct AudioOnlyFormatSelectionTests {
 
-    private func format(mime: String, bitrate: Int, url: String? = "https://example.com/a") -> [String: Any] {
+    private func format(mime: String, bitrate: Int, url: String? = "https://example.com/a", isDrc: Bool? = nil) -> [String: Any] {
         var f: [String: Any] = ["mimeType": mime, "bitrate": bitrate]
         if let url { f["url"] = url }
+        if let isDrc { f["isDrc"] = isDrc }
         return f
+    }
+
+    /// DRC 版が僅かに高ビットレートでも、通常版があればそちらを選ぶこと
+    @Test func prefersNonDrcAudioOverSlightlyHigherBitrateDrc() {
+        let formats = [
+            format(mime: "audio/mp4; codecs=\"mp4a.40.2\"", bitrate: 131_003, url: "https://example.com/drc", isDrc: true),
+            format(mime: "audio/mp4; codecs=\"mp4a.40.2\"", bitrate: 130_992, url: "https://example.com/normal")
+        ]
+        let url = YouTubeClient.selectAudioOnlyURL(from: formats)
+        #expect(url?.absoluteString == "https://example.com/normal")
+    }
+
+    /// DRC 版しか無い場合はそれを選ぶこと
+    @Test func fallsBackToDrcAudioWhenOnlyDrcExists() {
+        let formats = [
+            format(mime: "audio/mp4; codecs=\"mp4a.40.2\"", bitrate: 131_003, url: "https://example.com/drc", isDrc: true)
+        ]
+        let url = YouTubeClient.selectAudioOnlyURL(from: formats)
+        #expect(url?.absoluteString == "https://example.com/drc")
     }
 
     /// AVPlayer が再生できない opus (audio/webm) はビットレートが高くても選ばないこと

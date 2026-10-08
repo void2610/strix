@@ -44,7 +44,16 @@ enum YouTubeConstants {
     static let iosOSVersion = "18.4.0"
     static let iosUserAgent = "com.google.ios.youtube/\(iosClientVersion) (\(iosDeviceModel); U; CPU iOS 18_4 like Mac OS X;)"
 
-    // MARK: - ANDROID_VR クライアント（PO Token 不要・visitorData 必須、再生可能な直 URL を返す）
+    // MARK: - VISIONOS クライアント（PO Token 不要・visitorData 必須、SABR 移行済み動画にも HLS を返す）
+
+    static let visionOSClientName = "VISIONOS"
+    static let visionOSClientVersion = "1.02"
+    static let visionOSClientNameValue = "101"
+    static let visionOSDeviceModel = "RealityDevice17,1"
+    static let visionOSOSVersion = "26.5.23O471"
+    static let visionOSUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
+
+    // MARK: - ANDROID_VR クライアント（visitorData 必須。2026-08-17 以降、1.65.10 の全フォーマットが 403 になる）
 
     static let androidVrClientName = "ANDROID_VR"
     static let androidVrClientVersion = "1.65.10"
@@ -84,6 +93,21 @@ enum YouTubeConstants {
             "osVersion": iosOSVersion,
             "hl": language,
             "gl": region
+        ]]
+    }
+
+    /// VISIONOS クライアントの context 辞書を返す。visitorData が無いと LOGIN_REQUIRED（bot 判定）になる。
+    static func visionOSClientContext(visitorData: String) -> [String: Any] {
+        ["client": [
+            "clientName": visionOSClientName,
+            "clientVersion": visionOSClientVersion,
+            "deviceMake": "Apple",
+            "deviceModel": visionOSDeviceModel,
+            "osName": "visionOS",
+            "osVersion": visionOSOSVersion,
+            "hl": language,
+            "gl": region,
+            "visitorData": visitorData
         ]]
     }
 

@@ -9,7 +9,7 @@ import Foundation
 import WebKit
 
 /// Innertube API を呼び出して動画ストリームを取得するクライアント。
-/// IOS（認証付き）→ WEB（認証付き）の順にフォールバックする。
+/// VISIONOS → IOS（認証付き）→ WEB（認証付き）→ WebPage の順にフォールバックする。
 struct YouTubeClient {
     var fetchVideo: (String) async throws -> VideoInfo
 }
@@ -55,14 +55,22 @@ enum YouTubeClientError: LocalizedError {
 extension YouTubeClient {
     static let live = YouTubeClient(
         fetchVideo: { videoID in
-            // IOS と WEB を並列で発行し、ABR（適応ビットレート）の効く HLS を返す IOS を優先する。
-            // 直列フォールバックだと弱い電波で IOS のタイムアウト待ちがそのまま再生開始の遅延になるため、
-            // WEB を先に走らせておき、IOS 失敗時は即座にその結果へ切り替える。
+            // 直列フォールバックだと弱い電波で HLS 側のタイムアウト待ちがそのまま再生開始の遅延になるため、WEB を先に並列で走らせておく
             let webTask = Task { try await fetchWithWEB(videoID: videoID) }
             // 成功・失敗・呼び出し側キャンセルのいずれで抜けても並列の WEB リクエストを確実に止める
             defer { webTask.cancel() }
 
-            // IOS は HLS（音声込み・ABR）を返すため最優先。SABR 移行済み動画では HLS が無く失敗する。
+            // VISIONOS は PO Token 不要で、SABR 移行済み動画にも HLS（音声込み・ABR）を返すため最優先
+            do {
+                let info = try await fetchWithVisionOS(videoID: videoID)
+                strixLog("player[VISIONOS] 成功")
+                return info
+            } catch {
+                strixLog("player[VISIONOS] 失敗: \(error.localizedDescription)")
+                try Task.checkCancellation()
+            }
+
+            // IOS も HLS を返すが、SABR 移行済み動画では HLS が無く失敗する
             do {
                 var info = try await fetchWithIOS(videoID: videoID)
                 strixLog("player[IOS] 成功")
@@ -81,24 +89,6 @@ extension YouTubeClient {
             } catch {
                 strixLog("player[IOS] 失敗: \(error.localizedDescription)")
                 // 呼び出し側のキャンセルならフォールバックせず即終了する
-                try Task.checkCancellation()
-            }
-
-            // ANDROID_VR は PO Token 不要で、SABR 移行済み動画でも再生可能な直 URL（itag18 muxed）を返す
-            do {
-                var info = try await fetchWithAndroidVR(videoID: videoID)
-                strixLog("player[ANDROID_VR] 成功")
-                if info.playbackTrackingURLs == nil {
-                    let deadline = Task {
-                        try? await Task.sleep(for: .seconds(2))
-                        webTask.cancel()
-                    }
-                    info.playbackTrackingURLs = (try? await webTask.value)?.playbackTrackingURLs
-                    deadline.cancel()
-                }
-                return info
-            } catch {
-                strixLog("player[ANDROID_VR] 失敗: \(error.localizedDescription)")
                 try Task.checkCancellation()
             }
 
@@ -167,7 +157,7 @@ extension YouTubeClient {
                          playbackTrackingURLs: meta.trackingURLs)
     }
 
-    // MARK: - ANDROID_VR クライアント（PO Token 不要、再生可能な直 URL を返す）
+    // MARK: - VISIONOS クライアント（PO Token 不要、HLS を返す）
 
     /// セッションで使い回す visitorData をスレッドセーフにキャッシュする。
     /// 同時呼び出し時の data race を防ぎ、フェッチも 1 本に重複排除する。
@@ -209,9 +199,8 @@ extension YouTubeClient {
         }
     }
 
-    /// ANDROID_VR クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画でも
-    /// itag18（360p muxed、音声込みの単一 progressive URL）を含む再生可能な直 URL を返す。
-    private static func fetchWithAndroidVR(videoID: String) async throws -> VideoInfo {
+    /// VISIONOS クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画にも音声込み・ABR の HLS manifest を返す。
+    private static func fetchWithVisionOS(videoID: String) async throws -> VideoInfo {
         // 視聴履歴をアカウントに記録するため、認証付き WEB のトラッキング URL を並行取得する
         async let accountTracking = fetchAccountTrackingURLs(videoID: videoID)
         guard let visitorData = await fetchVisitorData() else {
@@ -221,32 +210,29 @@ extension YouTubeClient {
         var request = URLRequest(url: YouTubeConstants.playerURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(YouTubeConstants.androidVrUserAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue(YouTubeConstants.androidVrClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue(YouTubeConstants.androidVrClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue(YouTubeConstants.visionOSUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(YouTubeConstants.visionOSClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(YouTubeConstants.visionOSClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
         request.setValue(visitorData, forHTTPHeaderField: "X-Goog-Visitor-Id")
 
         let body: [String: Any] = [
             "videoId": videoID,
             "contentCheckOk": true,
             "racyCheckOk": true,
-            "context": YouTubeConstants.androidVrClientContext(visitorData: visitorData)
+            "context": YouTubeConstants.visionOSClientContext(visitorData: visitorData)
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let json = try await sendPlayerRequest(request)
         let meta = extractVideoMeta(from: json, videoID: videoID)
 
-        // itag18（音声込み muxed）を優先。SABR と異なり通常の Range GET で再生できる。
         let streamingData = json["streamingData"] as? [String: Any]
-        let formats = (streamingData?["formats"] as? [[String: Any]]) ?? []
-        guard let muxed = formats.first(where: { $0["itag"] as? Int == 18 }),
-              let urlStr = muxed["url"] as? String,
-              let streamURL = URL(string: urlStr) else {
+        guard let hlsString = streamingData?["hlsManifestUrl"] as? String,
+              let streamURL = URL(string: hlsString) else {
             _ = await accountTracking
             throw YouTubeClientError.streamNotFound
         }
-        // android_vr 自身のトラッキングはアカウント非紐付けのため、認証付き WEB のものを使う
+        // visionos 自身のトラッキングはアカウント非紐付けのため、認証付き WEB のものを使う
         let tracking = await accountTracking ?? meta.trackingURLs
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
@@ -445,7 +431,10 @@ extension YouTubeClient {
         let playableAudioFormats = adaptiveFormats.filter {
             ($0["mimeType"] as? String)?.hasPrefix("audio/mp4") == true && $0["url"] is String
         }
-        let best = playableAudioFormats.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
+        // DRC（音量の自動平準化）版は同じ itag で僅かに高ビットレートになり得るが、ダイナミックレンジが潰れるため通常版を優先する
+        let nonDrcFormats = playableAudioFormats.filter { $0["isDrc"] as? Bool != true }
+        let candidates = nonDrcFormats.isEmpty ? playableAudioFormats : nonDrcFormats
+        let best = candidates.max(by: { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) })
         guard let urlStr = best?["url"] as? String else { return nil }
         return URL(string: urlStr)
     }

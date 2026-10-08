@@ -340,7 +340,7 @@ final class PlayerViewModel {
         if audioOnly {
             if let audioURL = info.audioOnlyURL {
                 // adaptive 音声は open-ended Range だとスロットリングされるため区切り付きで取得する
-                let asset = StreamResourceLoader.makeAsset(realURL: audioURL, userAgent: YouTubeConstants.androidVrUserAgent)
+                let asset = StreamResourceLoader.makeAsset(realURL: audioURL, userAgent: YouTubeConstants.visionOSUserAgent)
                 let item = AVPlayerItem(asset: asset)
                 item.preferredForwardBufferDuration = 60
                 return item
@@ -355,7 +355,7 @@ final class PlayerViewModel {
         if s.contains("manifest") || s.contains(".m3u8") {
             return AVPlayerItem(url: info.streamURL)
         }
-        let asset = StreamResourceLoader.makeAsset(realURL: info.streamURL, userAgent: YouTubeConstants.androidVrUserAgent)
+        let asset = StreamResourceLoader.makeAsset(realURL: info.streamURL, userAgent: YouTubeConstants.visionOSUserAgent)
         let item = AVPlayerItem(asset: asset)
         item.preferredForwardBufferDuration = 60
         return item
