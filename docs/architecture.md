@@ -60,8 +60,8 @@ Innertube WEB client でライブラリ・プレイリスト一覧を取得。
 
 `DownloadManager`（`Utilities/`、`@MainActor @Observable` シングルトン）が動画のオフライン保存を管理する。
 
-- **ストリーム選定**: `YouTubeClient.fetchDownloadStream` が ANDROID_VR（PO Token 不要・itag18/22 の直 URL）を優先し、失敗時は WEB の combined formats へフォールバック。HLS はセグメント分割でファイル保存に不向きなため、progressive muxed（音声込み単一ファイル）のみを対象にする
-- **ダウンロード**: googlevideo の open-ended GET はスロットリングされるため、Range リクエストで 5MB チャンクに分割して一時ファイルへ書き出し、完了後に `Application Support/StrixDownloads` へ移動。サムネイルもオフライン用に保存する
+- **ストリーム選定**: `YouTubeClient.fetchDownloadStream` が VISIONOS（PO Token 不要）の adaptive formats から、H.264 映像（短辺 720 以下で最高画質）と AAC 音声を選ぶ。失敗時は WEB の adaptive formats へフォールバック。音声込みの単一ファイル（itag18/22）は PO Token なしでは取得できなくなったため使わない。HLS はセグメント分割でファイル保存に不向きなため使わない
+- **ダウンロード**: googlevideo の open-ended GET はスロットリングされるため、映像と音声をそれぞれ Range リクエストで 5MB チャンクに分割して一時ファイルへ書き出す。YouTube の DASH は moov の長さを補正しないと尺が約 2 倍に解釈されるため（音声のみモードの節を参照）、`FragmentedMP4.correctDurations` で補正してから `AVAssetExportSession`（passthrough、再エンコードなし）で 1 つの mp4 に結合し、`Application Support/StrixDownloads` へ移動。サムネイルもオフライン用に保存する
 - **永続化**: `DownloadedVideo`（SwiftData）が状態（`downloading`/`completed`/`failed`）・進捗・相対ファイル名を保持。絶対パスはアプリ再インストールで無効化するため保存しない
 - **DI**: `init(baseDirectory:fetchStream:downloadFile:)` でストリーム取得・実ファイル取得・保存先を注入可能にし、テスト時はネットワーク不要のフェイクへ差し替える
 - **オフライン再生**: `PlayerViewModel.loadStream` が再生前に完了済みの `DownloadedVideo` を照会し、ローカルファイルが存在すればネットワークを介さずそのまま再生する（`makePlayerItem` は file URL をカスタムスキームで包まずそのまま使う）

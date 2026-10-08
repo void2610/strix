@@ -145,8 +145,7 @@ extension YouTubeClient {
         let json = try await sendPlayerRequest(request)
         let meta = extractVideoMeta(from: json, videoID: videoID)
 
-        // HLS manifest URL（音声込みの完結ストリーム）。
-        // SABR 移行済みで hlsManifestUrl が返らない動画は、ANDROID_VR フォールバックへ回す。
+        // SABR 移行済みで hlsManifestUrl が返らない動画は、後段の WEB / WebPage フォールバックへ回す
         let streamingData = json["streamingData"] as? [String: Any]
         guard let hlsString = streamingData?["hlsManifestUrl"] as? String,
               let streamURL = URL(string: hlsString) else {
@@ -199,11 +198,8 @@ extension YouTubeClient {
         }
     }
 
-    /// VISIONOS クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画にも音声込み・ABR の HLS manifest を返す。
-    private static func fetchWithVisionOS(videoID: String) async throws -> VideoInfo {
-        // 視聴履歴をアカウントに記録するため、認証付き WEB のトラッキング URL を並行取得する
-        let accountTracking = Task { await fetchAccountTrackingURLs(videoID: videoID) }
-        defer { accountTracking.cancel() }
+    /// VISIONOS クライアントの /player リクエストを組み立てる
+    private static func visionOSPlayerRequest(videoID: String) async throws -> URLRequest {
         guard let visitorData = await fetchVisitorData() else {
             throw YouTubeClientError.streamNotFound
         }
@@ -222,8 +218,15 @@ extension YouTubeClient {
             "context": YouTubeConstants.visionOSClientContext(visitorData: visitorData)
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
 
-        let json = try await sendPlayerRequest(request)
+    /// VISIONOS クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画にも音声込み・ABR の HLS manifest を返す。
+    private static func fetchWithVisionOS(videoID: String) async throws -> VideoInfo {
+        // 視聴履歴をアカウントに記録するため、認証付き WEB のトラッキング URL を並行取得する
+        let accountTracking = Task { await fetchAccountTrackingURLs(videoID: videoID) }
+        defer { accountTracking.cancel() }
+        let json = try await sendPlayerRequest(visionOSPlayerRequest(videoID: videoID))
         let meta = extractVideoMeta(from: json, videoID: videoID)
 
         let streamingData = json["streamingData"] as? [String: Any]
@@ -429,7 +432,7 @@ extension YouTubeClient {
     }
 
     /// 視聴履歴用のトラッキング URL を認証付き WEB クライアントから取得する。
-    /// android_vr 等の非認証クライアントのトラッキングはログインアカウントに紐づかないため、これを使う。
+    /// visionos 等の非認証クライアントのトラッキングはログインアカウントに紐づかないため、これを使う。
     static func fetchAccountTrackingURLs(videoID: String) async -> PlaybackTrackingURLs? {
         // 未サインインでは取得しても再生統計をアカウントに紐づけられないため /player を打たない
         guard AuthState.shared.isSignedIn else { return nil }
@@ -467,11 +470,12 @@ extension YouTubeClient {
 
 // MARK: - ダウンロード用ストリーム取得
 
-/// オフライン保存向けの progressive muxed ストリーム情報。
-/// HLS はセグメント分割されファイル保存に不向きなため、単一ファイルの直 URL を返す。
+/// 音声込みの単一ファイル（旧 itag18/22）は PO Token なしでは取得できないため、映像と音声を別々に取得して端末で mp4 に結合する
 struct DownloadStream: Sendable {
-    /// progressive muxed（映像+音声一体）の直 URL
-    let url: URL
+    /// 映像のみ（H.264 / mp4）の直 URL
+    let videoURL: URL
+    /// 音声のみ（AAC / mp4）の直 URL
+    let audioURL: URL
     let title: String
     let thumbnailURL: String
     let channelName: String?
@@ -479,15 +483,17 @@ struct DownloadStream: Sendable {
     let lengthSeconds: Double
     /// 取得に必要な User-Agent
     let userAgent: String
-    /// 保存ファイルの拡張子（itag18/22 は mp4）
+    /// 保存ファイルの拡張子（結合後の mp4）
     let fileExtension: String
 }
 
 extension YouTubeClient {
-    /// ダウンロード用の progressive muxed URL を取得する。
-    /// ANDROID_VR（PO Token 不要・itag18/22 の直 URL）を優先し、失敗時は WEB の combined formats へフォールバックする。
+    /// 端末の保存容量と通信量を抑えるため、旧来の itag22 と同じ 720p を上限にする
+    private static let maxDownloadShortSide = 720
+
+    /// VISIONOS（PO Token 不要）を優先し、失敗時は WEB の adaptive formats へフォールバックする
     static func fetchDownloadStream(videoID: String) async throws -> DownloadStream {
-        if let stream = try? await fetchAndroidVRDownload(videoID: videoID) {
+        if let stream = try? await fetchVisionOSDownload(videoID: videoID) {
             return stream
         }
         return try await fetchWebDownload(videoID: videoID)
@@ -501,50 +507,31 @@ extension YouTubeClient {
         return 0
     }
 
-    /// progressive formats から保存可能な muxed URL を選ぶ。
-    /// 高画質を優先しつつ、`url`（署名済み直 URL）を持つものに限定する（signatureCipher のみは保存不可）。
-    static func selectProgressiveDownloadURL(from formats: [[String: Any]]) -> URL? {
-        // itag 22（720p）→ 18（360p）の順に muxed を探す。無ければ url を持つ progressive の最初。
-        for itag in [22, 18] {
-            if let f = formats.first(where: { $0["itag"] as? Int == itag }),
-               let s = f["url"] as? String, let u = URL(string: s) {
-                return u
-            }
+    /// 再エンコードせずに mp4 へ結合できる H.264 映像と AAC 音声を選ぶ（signatureCipher のみのフォーマットは保存できないので除外）
+    static func selectDownloadFormats(from adaptiveFormats: [[String: Any]]) -> (video: URL, audio: URL)? {
+        // 縦長動画は高さが長辺になるため、画質は短辺で比べる
+        func shortSide(_ f: [String: Any]) -> Int { min(f["width"] as? Int ?? 0, f["height"] as? Int ?? 0) }
+        let videos = adaptiveFormats.filter {
+            let mime = $0["mimeType"] as? String ?? ""
+            return mime.hasPrefix("video/mp4") && mime.contains("avc1") && $0["url"] is String
+                && shortSide($0) <= maxDownloadShortSide
         }
-        if let s = formats.first(where: { $0["url"] is String })?["url"] as? String {
-            return URL(string: s)
-        }
-        return nil
+        let best = videos.max { (shortSide($0), $0["bitrate"] as? Int ?? 0) < (shortSide($1), $1["bitrate"] as? Int ?? 0) }
+        guard let videoString = best?["url"] as? String, let video = URL(string: videoString),
+              let audio = selectAudioOnlyURL(from: adaptiveFormats) else { return nil }
+        return (video, audio)
     }
 
-    private static func fetchAndroidVRDownload(videoID: String) async throws -> DownloadStream {
-        guard let visitorData = await fetchVisitorData() else {
-            throw YouTubeClientError.streamNotFound
-        }
-        var request = URLRequest(url: YouTubeConstants.playerURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(YouTubeConstants.androidVrUserAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue(YouTubeConstants.androidVrClientNameValue, forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue(YouTubeConstants.androidVrClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
-        request.setValue(visitorData, forHTTPHeaderField: "X-Goog-Visitor-Id")
-        let body: [String: Any] = [
-            "videoId": videoID,
-            "contentCheckOk": true,
-            "racyCheckOk": true,
-            "context": YouTubeConstants.androidVrClientContext(visitorData: visitorData)
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let json = try await sendPlayerRequest(request)
+    private static func fetchVisionOSDownload(videoID: String) async throws -> DownloadStream {
+        let json = try await sendPlayerRequest(visionOSPlayerRequest(videoID: videoID))
         let meta = extractVideoMeta(from: json, videoID: videoID)
-        let formats = ((json["streamingData"] as? [String: Any])?["formats"] as? [[String: Any]]) ?? []
-        guard let url = selectProgressiveDownloadURL(from: formats) else {
+        let adaptiveFormats = ((json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]]) ?? []
+        guard let formats = selectDownloadFormats(from: adaptiveFormats) else {
             throw YouTubeClientError.streamNotFound
         }
-        return DownloadStream(url: url, title: meta.title, thumbnailURL: meta.thumbnailURL,
+        return DownloadStream(videoURL: formats.video, audioURL: formats.audio, title: meta.title, thumbnailURL: meta.thumbnailURL,
                               channelName: meta.channelName, lengthSeconds: lengthSeconds(from: json),
-                              userAgent: YouTubeConstants.androidVrUserAgent, fileExtension: "mp4")
+                              userAgent: YouTubeConstants.visionOSUserAgent, fileExtension: "mp4")
     }
 
     private static func fetchWebDownload(videoID: String) async throws -> DownloadStream {
@@ -560,11 +547,11 @@ extension YouTubeClient {
 
         let json = try await sendPlayerRequest(request)
         let meta = extractVideoMeta(from: json, videoID: videoID)
-        let formats = ((json["streamingData"] as? [String: Any])?["formats"] as? [[String: Any]]) ?? []
-        guard let url = selectProgressiveDownloadURL(from: formats) else {
+        let adaptiveFormats = ((json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]]) ?? []
+        guard let formats = selectDownloadFormats(from: adaptiveFormats) else {
             throw YouTubeClientError.streamNotFound
         }
-        return DownloadStream(url: url, title: meta.title, thumbnailURL: meta.thumbnailURL,
+        return DownloadStream(videoURL: formats.video, audioURL: formats.audio, title: meta.title, thumbnailURL: meta.thumbnailURL,
                               channelName: meta.channelName, lengthSeconds: lengthSeconds(from: json),
                               userAgent: YouTubeConstants.webUserAgent, fileExtension: "mp4")
     }
