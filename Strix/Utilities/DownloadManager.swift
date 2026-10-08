@@ -219,16 +219,19 @@ final class DownloadManager {
     /// 本番のファイルダウンロード。映像と音声を個別に取得し、mp4 に結合した一時ファイルを返す。
     nonisolated static func liveDownloadFile(_ stream: DownloadStream,
                                              progress: @escaping @Sendable @MainActor (Double) -> Void) async throws -> URL {
-        let videoSize = Double(contentLength(of: stream.videoURL) ?? 0)
-        let audioSize = Double(contentLength(of: stream.audioURL) ?? 0)
-        // サイズが分からなければ、映像が全体の大半を占める前提で進捗を配分する
-        let videoShare = videoSize + audioSize > 0 ? videoSize / (videoSize + audioSize) : 0.9
+        let videoShare = videoProgressShare(videoSize: contentLength(of: stream.videoURL), audioSize: contentLength(of: stream.audioURL))
 
         let videoFile = try await downloadInRanges(stream.videoURL, userAgent: stream.userAgent) { await progress($0 * videoShare) }
         defer { try? FileManager.default.removeItem(at: videoFile) }
         let audioFile = try await downloadInRanges(stream.audioURL, userAgent: stream.userAgent) { await progress(videoShare + $0 * (1 - videoShare)) }
         defer { try? FileManager.default.removeItem(at: audioFile) }
         return try await mux(video: videoFile, audio: audioFile)
+    }
+
+    /// 全体の進捗のうち映像の取得に割り当てる割合。片方でもサイズが分からなければ比率は意味を持たないため、映像が大半を占める前提の推定値を使う
+    nonisolated static func videoProgressShare(videoSize: Int64?, audioSize: Int64?) -> Double {
+        guard let videoSize, let audioSize, videoSize > 0, audioSize > 0 else { return 0.9 }
+        return Double(videoSize) / Double(videoSize + audioSize)
     }
 
     /// googlevideo の adaptive URL が持つ全体サイズ（clen）

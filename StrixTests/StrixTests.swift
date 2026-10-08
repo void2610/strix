@@ -2886,6 +2886,24 @@ struct DownloadFormatSelectionTests {
     }
 }
 
+// MARK: - ダウンロード: 進捗配分 ユニットテスト
+
+struct DownloadProgressShareTests {
+
+    /// 映像と音声のサイズがどちらも分かれば、その比率で配分すること
+    @Test func splitsBySizeWhenBothKnown() {
+        #expect(DownloadManager.videoProgressShare(videoSize: 300, audioSize: 100) == 0.75)
+    }
+
+    /// 片方でもサイズが分からなければ、推定配分（映像 9 割）を使うこと（欠損を 0 として比率を出すと進捗が止まるか先に 100% になる）
+    @Test func fallsBackToEstimateWhenEitherUnknown() {
+        #expect(DownloadManager.videoProgressShare(videoSize: nil, audioSize: 100) == 0.9)
+        #expect(DownloadManager.videoProgressShare(videoSize: 300, audioSize: nil) == 0.9)
+        #expect(DownloadManager.videoProgressShare(videoSize: nil, audioSize: nil) == 0.9)
+        #expect(DownloadManager.videoProgressShare(videoSize: 0, audioSize: 100) == 0.9)
+    }
+}
+
 // MARK: - ダウンロード: DownloadManager ユニットテスト
 
 /// 注入クロージャからの呼び出し回数を数える参照型ヘルパー
