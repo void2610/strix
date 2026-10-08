@@ -57,4 +57,4 @@
 ## セキュリティ
 
 - **ボット検出対策**: WebPage フォールバック + `BotVerifyView` で CAPTCHA 解決
-- **3段フォールバック**: IOS → WEB → WebPage でストリーム取得の耐障害性を確保
+- **4段フォールバック**: VISIONOS → IOS → WEB → WebPage でストリーム取得の耐障害性を確保

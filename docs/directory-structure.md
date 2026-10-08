@@ -43,7 +43,7 @@ strix/
 │   │       ├── VideoCardView.swift  # 共通カード・行ビュー
 │   │       └── AddToPlaylistMenu.swift  # プレイリスト追加サブメニュー
 │   ├── Clients/
-│   │   ├── YouTubeClient.swift      # ストリーム URL 取得（IOS → WEB → WebPage フォールバック）
+│   │   ├── YouTubeClient.swift      # ストリーム URL 取得（VISIONOS → IOS → WEB → WebPage フォールバック）
 │   │   ├── ContentClient.swift      # ホーム/検索/関連動画/チャンネル/プレイリスト
 │   │   ├── AccountClient.swift      # アカウント情報・ライブラリ
 │   │   └── AuthClient.swift         # 認証状態管理（AuthState）・Keychain・Cookie 検証
