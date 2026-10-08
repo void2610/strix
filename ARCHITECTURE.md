@@ -172,11 +172,12 @@ struct VideoInfo {
 }
 ```
 
-**3段フォールバック:**
+**4段フォールバック:**
 
-1. **IOS クライアント** — HLS manifest URL を取得。Cookie + SAPISIDHASH 認証
-2. **WEB クライアント** — combined formats / HLS を取得。Cookie + SAPISIDHASH 認証
-3. **WebPage（WKWebView）** — モバイル版 YouTube を読み込み、JS で再生を開始。`fetch()` / `XMLHttpRequest.open()` をフックして `googlevideo.com/videoplayback` への署名デコード済み URL をインターセプト。combined format（itag 18/22）を優先選択
+1. **VISIONOS クライアント** — HLS manifest URL を取得。認証なし・visitorData 必須、PO Token 不要（詳細は docs/architecture.md）
+2. **IOS クライアント** — HLS manifest URL を取得。Cookie + SAPISIDHASH 認証
+3. **WEB クライアント** — combined formats / HLS を取得。Cookie + SAPISIDHASH 認証
+4. **WebPage（WKWebView）** — モバイル版 YouTube を読み込み、JS で再生を開始。`fetch()` / `XMLHttpRequest.open()` をフックして `googlevideo.com/videoplayback` への署名デコード済み URL をインターセプト。combined format（itag 18/22）を優先選択
 
 **エラー種別:**
 ```swift
