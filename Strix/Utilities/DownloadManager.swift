@@ -65,9 +65,9 @@ final class DownloadManager {
 
     /// オフライン再生可能か（完了状態かつ実ファイルが存在する）。
     /// 完了レコードでもファイルが削除/欠損していれば false を返し、再ダウンロードを許可する。
-    nonisolated static func isPlayableOffline(_ record: DownloadedVideo) -> Bool {
+    nonisolated static func isPlayableOffline(_ record: DownloadedVideo, in baseDirectory: URL = defaultBaseDirectory) -> Bool {
         record.state == .completed
-            && FileManager.default.fileExists(atPath: localFileURL(fileName: record.fileName).path)
+            && FileManager.default.fileExists(atPath: baseDirectory.appendingPathComponent(record.fileName).path)
     }
 
     /// SwiftData から既存レコードを取得する
@@ -86,7 +86,7 @@ final class DownloadManager {
     func startDownload(video: VideoItem, modelContext: ModelContext) {
         let videoID = video.videoId
         guard tasks[videoID] == nil else { return }
-        if let existing = Self.record(for: videoID, in: modelContext), Self.isPlayableOffline(existing) { return }
+        if let existing = Self.record(for: videoID, in: modelContext), Self.isPlayableOffline(existing, in: baseDirectory) { return }
 
         progress[videoID] = 0
         let task = Task { [weak self] in

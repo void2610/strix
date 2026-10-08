@@ -2730,10 +2730,31 @@ struct DownloadManagerTests {
         let rec = DownloadedVideo(videoID: "dl4", title: "T", fileName: "dl4.mp4", state: .completed)
         ctx.insert(rec)
         try ctx.save()
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try Data("video-bytes".utf8).write(to: base.appendingPathComponent("dl4.mp4"))
 
         manager.startDownload(video: VideoItem(videoId: "dl4", title: "T"), modelContext: ctx)
         #expect(counter.count == 0) // 完了済みなので取得すら走らない
         #expect(!manager.isDownloading("dl4"))
+    }
+
+    /// 完了レコードでも保存先に実ファイルが無ければ再ダウンロードを始めること
+    @Test func startDownloadRedownloadsCompletedRecordWithMissingFile() async throws {
+        let ctx = try makeContext()
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let manager = DownloadManager(
+            baseDirectory: base,
+            fetchStream: { _ in throw URLError(.badURL) },
+            downloadFile: { _, _ in throw URLError(.badURL) }
+        )
+
+        let rec = DownloadedVideo(videoID: "dl6", title: "T", fileName: "dl6.mp4", state: .completed)
+        ctx.insert(rec)
+        try ctx.save()
+
+        manager.startDownload(video: VideoItem(videoId: "dl6", title: "T"), modelContext: ctx)
+        #expect(manager.isDownloading("dl6"))
     }
 
     @Test func recordLookupFindsInsertedRecord() throws {
