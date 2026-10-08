@@ -5,7 +5,7 @@
 - **広告なし動画再生**: Innertube API 直接呼び出しによるストリーム取得
 - **バックグラウンド再生**: `AVAudioSession(.playback)` + `UIBackgroundModes: audio`
 - **PiP（ピクチャ・イン・ピクチャ）**: AVPlayerViewController subclass で実装
-- **音声専用モード**: IOS クライアントの `adaptiveFormats` から音声ストリームのみ取得
+- **音声専用モード**: 再生に使うクライアント（通常は VISIONOS）の `adaptiveFormats` から AAC 音声ストリームのみ取得
 - **ミニプレイヤー**: 動画部分を下スワイプで画面右下の小窓に最小化。映像がリアルタイムで流れ続け、タップでフルスクリーン復帰。ドラッグで画面内を自由に移動可能
 - **ダウンロード & オフライン再生**: 動画を progressive muxed（itag18/22）で端末に保存し、ネットワークなしで再生。コンテキストメニューから開始し、アカウント > ダウンロードで一覧・進捗確認・削除。再生時はローカルファイルがあれば自動的に優先される（`DownloadManager` / `DownloadedVideo`）
 
