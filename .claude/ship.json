@@ -1,3 +1,4 @@
 {
-  "test": "xcodebuild -quiet test -project Strix.xcodeproj -scheme Strix -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:StrixTests"
+  "test": "xcodebuild -quiet test -project Strix.xcodeproj -scheme Strix -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:StrixTests",
+  "format": "swiftformat ."
 }

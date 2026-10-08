@@ -1,0 +1,8 @@
+# 既存の書き方 (揃え・末尾カンマなし・1 行 if 等) を壊さないよう、空白とインデントの揺れを正すルールだけを有効にする
+--minversion 0.63.1
+--swiftversion 6.0
+--rules blankLinesAtEndOfScope,braces,consecutiveBlankLines,duplicateImports,elseOnSameLine,indent,leadingDelimiters,linebreakAtEndOfFile,linebreaks,semicolons,spaceAroundBraces,spaceAroundBrackets,spaceAroundComments,spaceAroundGenerics,spaceAroundOperators,spaceAroundParens,spaceInsideBraces,spaceInsideBrackets,spaceInsideComments,spaceInsideGenerics,spaceInsideParens,trailingSpace
+--indent 4
+--ranges no-space
+--guardelse same-line
+--elseposition same-line

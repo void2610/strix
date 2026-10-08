@@ -65,8 +65,7 @@ extension ContentClient {
             let type_        = newElement["type"] as? [String: Any],
             let component    = type_["componentType"] as? [String: Any],
             let model        = component["model"]     as? [String: Any],
-            let vcm          = model["videoWithContextModel"] as? [String: Any]
-        else { return nil }
+            let vcm          = model["videoWithContextModel"] as? [String: Any] else { return nil }
         return vcm
     }
 
@@ -93,8 +92,7 @@ extension ContentClient {
         // 解決できないものは広告等の不正エントリとみなし除外する
         let titleObj = vr["title"] as? [String: Any]
         guard let title = (titleObj?["simpleText"] as? String)
-            ?? ((titleObj?["runs"] as? [[String: Any]])?.first?["text"] as? String)
-        else { return nil }
+            ?? ((titleObj?["runs"] as? [[String: Any]])?.first?["text"] as? String) else { return nil }
 
         // サムネイル
         let thumbs = (vr["thumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]]

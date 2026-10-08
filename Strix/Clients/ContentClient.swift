@@ -357,7 +357,7 @@ extension ContentClient {
                 .flatMap { $0.isEmpty ? nil : $0 }
         }
         guard let sapisid = cookieValue(for: "__Secure-3PAPISID")
-                         ?? cookieValue(for: "SAPISID") else { return nil }
+            ?? cookieValue(for: "SAPISID") else { return nil }
 
         let origin = YouTubeConstants.origin
         let timestamp = Int(Date().timeIntervalSince1970)

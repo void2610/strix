@@ -717,7 +717,7 @@ struct YouTubeClientTests {
         #expect(!info.streamURL.absoluteString.isEmpty)
         #expect(info.title != testVideoID)
         #expect(info.streamURL.absoluteString.contains("googlevideo") ||
-                info.streamURL.absoluteString.contains("manifest"))
+            info.streamURL.absoluteString.contains("manifest"))
     }
 
     /// SABR 移行済み動画でも、チェーン（android_vr フォールバック）が再生可能な直 URL を返すことを検証する。

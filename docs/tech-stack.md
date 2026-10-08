@@ -21,6 +21,12 @@
 - **DI パターン**: `init(client: ContentClient = .live)` で本番はデフォルト引数、テスト時は `.mock()` で差し替え
 - **クライアント分離**: `YouTubeClient` / `ContentClient` / `AccountClient` / `AuthClient` に責務を分離
 
+## フォーマッタ
+
+- **SwiftFormat**（nicklockwood 版、Homebrew）を `.swiftformat` の設定で使う。`swiftformat .` で全体を整形する
+- 有効にするルールは、空白とインデントの揺れを正すものだけに限定している（`--rules` によるホワイトリスト）。既存の書き方（辞書・行末コメントの揃え、末尾カンマなし、1 行の `if` 本体、`guard ... else {` を最後の条件と同じ行に置く）を保つため
+- Apple の swift-format（Xcode 同梱）は見送った。複数行の `guard` / `if` で `else` と `{` を独立した行に移し、短い代入まで `=` の直後で改行するなど、既存スタイルを大きく書き換え、しかもそれらを設定で無効にできないため
+
 ## 開発環境
 
 - **開発機**: M1 MacBook Pro

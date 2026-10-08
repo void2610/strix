@@ -15,6 +15,13 @@ xcodebuild -project Strix.xcodeproj -scheme Strix \
 xcodebuild -resolvePackageDependencies -project Strix.xcodeproj
 ```
 
+## フォーマット
+
+```bash
+# SwiftFormat（設定は .swiftformat）
+swiftformat .
+```
+
 ## 実機ビルド＆インストール（iPhone 16）
 
 ```bash
