@@ -776,6 +776,31 @@ struct YouTubeConstantsTests {
     }
 }
 
+// MARK: - 上限付きの待ち合わせテスト
+
+struct TimeLimitedValueTests {
+
+    /// 上限内に終わった取得の値をそのまま返すこと
+    @Test func returnsValueFinishedWithinLimit() async {
+        let task = Task<Int?, Never> { 42 }
+        #expect(await YouTubeClient.value(of: task, within: .seconds(2)) == 42)
+    }
+
+    /// 上限を過ぎた取得は待たずに nil を返し、取得自体も中断すること（再生開始をトラッキング取得で遅らせない）
+    @Test func returnsNilAndCancelsTaskWhenLimitExceeded() async {
+        let task = Task<Int?, Never> {
+            try? await Task.sleep(for: .seconds(30))
+            return 1
+        }
+        let clock = ContinuousClock()
+        let start = clock.now
+        let value = await YouTubeClient.value(of: task, within: .milliseconds(100))
+        #expect(value == nil)
+        #expect(clock.now - start < .seconds(5))
+        #expect(task.isCancelled)
+    }
+}
+
 // MARK: - ContentClient 結合テスト
 
 struct ContentClientTests {

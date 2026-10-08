@@ -202,9 +202,9 @@ extension YouTubeClient {
     /// VISIONOS クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画にも音声込み・ABR の HLS manifest を返す。
     private static func fetchWithVisionOS(videoID: String) async throws -> VideoInfo {
         // 視聴履歴をアカウントに記録するため、認証付き WEB のトラッキング URL を並行取得する
-        async let accountTracking = fetchAccountTrackingURLs(videoID: videoID)
+        let accountTracking = Task { await fetchAccountTrackingURLs(videoID: videoID) }
+        defer { accountTracking.cancel() }
         guard let visitorData = await fetchVisitorData() else {
-            _ = await accountTracking
             throw YouTubeClientError.streamNotFound
         }
         var request = URLRequest(url: YouTubeConstants.playerURL)
@@ -229,11 +229,10 @@ extension YouTubeClient {
         let streamingData = json["streamingData"] as? [String: Any]
         guard let hlsString = streamingData?["hlsManifestUrl"] as? String,
               let streamURL = URL(string: hlsString) else {
-            _ = await accountTracking
             throw YouTubeClientError.streamNotFound
         }
-        // visionos 自身のトラッキングはアカウント非紐付けのため、認証付き WEB のものを使う
-        let tracking = await accountTracking ?? meta.trackingURLs
+        // visionos 自身のトラッキングはアカウント非紐付けのため認証付き WEB のものを使うが、取得済みの HLS の再生開始は 2 秒までしか遅らせない
+        let tracking = await value(of: accountTracking, within: .seconds(2)) ?? meta.trackingURLs
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
                          playbackTrackingURLs: tracking)
@@ -335,6 +334,22 @@ extension YouTubeClient {
     }
 
     // MARK: - 共通ヘルパー
+
+    /// 補助的な取得を limit まで待ち、間に合わなければ取得を中断して nil を返す（再生開始を補助情報の取得で遅らせないため）
+    static func value<T: Sendable>(of task: Task<T?, Never>, within limit: Duration) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await task.value }
+            group.addTask {
+                try? await Task.sleep(for: limit)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            // 待ちを打ち切っても取得側が走り続けると、group がその完了を待ってしまう
+            task.cancel()
+            group.cancelAll()
+            return first
+        }
+    }
 
     /// /player リクエストを送信し、レスポンス JSON を返す。再生不可ならエラーを投げる。
     private static func sendPlayerRequest(_ request: URLRequest) async throws -> [String: Any] {
