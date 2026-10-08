@@ -1,7 +1,22 @@
 import Foundation
 
 /// YouTube の DASH（断片化 MP4）は空の moov にも全体の長さを書き、AVFoundation が断片の合計と足して約 2 倍の尺にするため、moov 側の長さを 0 にして断片だけで数えさせる
-enum FragmentedMP4 {
+nonisolated enum FragmentedMP4 {
+
+    /// DASH の moov は先頭の数 KB に収まるため、ファイル全体を読まずに先頭だけで判定する
+    private static let headerReadLimit = 1 << 20
+
+    /// 保存済みファイルの moov の duration をその場で 0 にする（断片化 MP4 以外は何もしない）
+    static func correctDurations(inFileAt url: URL) throws {
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        let header = try handle.read(upToCount: headerReadLimit) ?? Data()
+        guard let ranges = durationFieldRanges(inHeader: header) else { return }
+        for range in ranges {
+            try handle.seek(toOffset: UInt64(range.lowerBound))
+            try handle.write(contentsOf: Data(count: Int(range.upperBound - range.lowerBound)))
+        }
+    }
 
     /// ファイル先頭からの応答で対象範囲を一度だけ特定し、Range ごとに分かれて届く以降の応答にも同じ補正を掛ける
     struct DurationCorrector {

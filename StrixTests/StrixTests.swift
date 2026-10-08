@@ -707,6 +707,8 @@ struct ContentClientHistoryTests {
 
 // MARK: - YouTubeClient 結合テスト
 
+// 並列に叩くと googlevideo が一時的に 403 を返すことがあるため、直列に実行する
+@Suite(.serialized)
 struct YouTubeClientTests {
     let testVideoID = "jYg8wCT02FA"
 
@@ -764,6 +766,19 @@ struct YouTubeClientTests {
         let item = vm.makePlayerItem(info: info, audioOnly: true)
         let duration = try await item.asset.load(.duration).seconds
         #expect(abs(duration - expected) < 1, "尺 \(duration) 秒が実際の \(expected) 秒と一致しない")
+    }
+
+    /// ダウンロードした映像と音声を結合した mp4 が、映像と音声を持ち、動画の長さどおりの尺になること
+    @Test func downloadedVideoIsMuxedWithActualDuration() async throws {
+        let stream = try await YouTubeClient.fetchDownloadStream(videoID: "jNQXAC9IVRw")
+        let file = try await DownloadManager.liveDownloadFile(stream) { _ in }
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let asset = AVURLAsset(url: file)
+        let duration = try await asset.load(.duration).seconds
+        #expect(abs(duration - stream.lengthSeconds) < 2, "尺 \(duration) 秒が動画の長さ \(stream.lengthSeconds) 秒と一致しない")
+        #expect(try await !asset.loadTracks(withMediaType: .video).isEmpty)
+        #expect(try await !asset.loadTracks(withMediaType: .audio).isEmpty)
     }
 
     /// HLS マスターの最初のバリアントを辿り、末尾セグメントの URL を返す
@@ -2738,6 +2753,19 @@ struct FragmentedMP4Tests {
         #expect([UInt8](corrector.correct(Data(file), at: 0)) == file)
         #expect([UInt8](corrector.correct(Data(file.suffix(40)), at: Int64(file.count - 40))) == Array(file.suffix(40)))
     }
+
+    /// 保存済みファイルの moov の duration だけをその場で 0 にすること（ダウンロード後の結合前に使う）
+    @Test func correctsDurationsInFileInPlace() throws {
+        let file = makeFile()
+        let ranges = try #require(FragmentedMP4.durationFieldRanges(inHeader: Data(file)))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(file).write(to: url)
+
+        try FragmentedMP4.correctDurations(inFileAt: url)
+        let patched = try [UInt8](Data(contentsOf: url))
+        expectOnlyFieldsZeroed(original: file, patched: patched, ranges: ranges, offset: 0)
+    }
 }
 
 // MARK: - 音声のみモード: WebPage フォールバックの音声 URL 選択テスト
@@ -2808,40 +2836,53 @@ struct DownloadedVideoTests {
     }
 }
 
-// MARK: - ダウンロード: progressive URL 選択 ユニットテスト
+// MARK: - ダウンロード: 映像・音声フォーマット選択 ユニットテスト
 
-struct ProgressiveDownloadURLTests {
+struct DownloadFormatSelectionTests {
 
-    @Test func selectsItag22First() {
-        let formats: [[String: Any]] = [
-            ["itag": 18, "url": "https://ex.com/18"],
-            ["itag": 22, "url": "https://ex.com/22"]
+    private func video(_ name: String, width: Int, height: Int, bitrate: Int = 1_000_000,
+                       codec: String = "avc1.4d401f", url: Bool = true) -> [String: Any] {
+        var f: [String: Any] = ["mimeType": "video/mp4; codecs=\"\(codec)\"", "width": width, "height": height, "bitrate": bitrate]
+        if url { f["url"] = "https://ex.com/\(name)" }
+        return f
+    }
+
+    private let audio: [String: Any] = ["mimeType": "audio/mp4; codecs=\"mp4a.40.2\"", "bitrate": 130_000, "url": "https://ex.com/aac"]
+
+    /// 720p 以下の H.264 で最高画質の映像と AAC 音声を組にすること
+    @Test func picksBestAvcVideoUpTo720pWithAacAudio() {
+        let formats = [
+            video("360", width: 640, height: 360),
+            video("720", width: 1280, height: 720),
+            video("1080", width: 1920, height: 1080),
+            audio
         ]
-        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/22")
+        let selected = YouTubeClient.selectDownloadFormats(from: formats)
+        #expect(selected?.video.absoluteString == "https://ex.com/720")
+        #expect(selected?.audio.absoluteString == "https://ex.com/aac")
     }
 
-    @Test func fallsBackToItag18() {
-        let formats: [[String: Any]] = [["itag": 18, "url": "https://ex.com/18"]]
-        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/18")
+    /// 縦長動画は短辺で画質を比べ、720 幅の縦動画も対象にすること
+    @Test func comparesPortraitVideosByShortSide() {
+        let formats = [video("portrait720", width: 720, height: 1280), video("portrait360", width: 360, height: 640), audio]
+        #expect(YouTubeClient.selectDownloadFormats(from: formats)?.video.absoluteString == "https://ex.com/portrait720")
     }
 
-    /// url を持たない（signatureCipher のみの）フォーマットは保存不可なので選ばない
-    @Test func skipsFormatsWithoutURL() {
+    /// mp4 に結合できない VP9 や、url を持たない（signatureCipher のみの）映像は選ばないこと
+    @Test func skipsVp9AndFormatsWithoutURL() {
         let formats: [[String: Any]] = [
-            ["itag": 22, "signatureCipher": "x"],
-            ["itag": 18, "url": "https://ex.com/18"]
+            ["mimeType": "video/webm; codecs=\"vp9\"", "width": 1280, "height": 720, "bitrate": 2_000_000, "url": "https://ex.com/vp9"],
+            video("cipher", width: 1280, height: 720, url: false),
+            video("480", width: 854, height: 480),
+            audio
         ]
-        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/18")
+        #expect(YouTubeClient.selectDownloadFormats(from: formats)?.video.absoluteString == "https://ex.com/480")
     }
 
-    @Test func returnsFirstWithURLWhenNoPreferredItag() {
-        let formats: [[String: Any]] = [["itag": 59, "url": "https://ex.com/59"]]
-        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats)?.absoluteString == "https://ex.com/59")
-    }
-
-    @Test func returnsNilWhenNoDownloadableURL() {
-        let formats: [[String: Any]] = [["itag": 22, "signatureCipher": "x"]]
-        #expect(YouTubeClient.selectProgressiveDownloadURL(from: formats) == nil)
+    /// 映像か音声のどちらかが無ければ保存できないので nil を返すこと
+    @Test func returnsNilWithoutVideoOrAudio() {
+        #expect(YouTubeClient.selectDownloadFormats(from: [audio]) == nil)
+        #expect(YouTubeClient.selectDownloadFormats(from: [video("720", width: 1280, height: 720)]) == nil)
     }
 }
 
@@ -2869,8 +2910,8 @@ struct DownloadManagerTests {
     }
 
     private func makeStream() -> DownloadStream {
-        DownloadStream(url: URL(string: "https://example.com/v.mp4")!, title: "テスト動画",
-                       thumbnailURL: "", channelName: "チャンネル", lengthSeconds: 120,
+        DownloadStream(videoURL: URL(string: "https://example.com/v.mp4")!, audioURL: URL(string: "https://example.com/a.m4a")!,
+                       title: "テスト動画", thumbnailURL: "", channelName: "チャンネル", lengthSeconds: 120,
                        userAgent: "UA", fileExtension: "mp4")
     }
 

@@ -5,8 +5,21 @@
 //  Created by Shuya Izumi on 2026/07/10.
 //
 
+import AVFoundation
 import Foundation
 import SwiftData
+
+nonisolated enum DownloadError: LocalizedError {
+    case missingTrack
+    case exportUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .missingTrack: return "映像または音声のトラックが見つかりませんでした"
+        case .exportUnavailable: return "動画の結合を開始できませんでした"
+        }
+    }
+}
 
 /// 動画のダウンロードとオフライン保存を管理する。
 /// ストリーム取得（`fetchStream`）と実ファイル取得（`downloadFile`）を注入可能にし、
@@ -203,10 +216,29 @@ final class DownloadManager {
         try await YouTubeClient.fetchDownloadStream(videoID: videoID)
     }
 
-    /// 本番のファイルダウンロード。googlevideo の open-ended GET はスロットリングされるため、
-    /// Range リクエストでチャンク分割して取得し、一時ファイルに書き出す。
+    /// 本番のファイルダウンロード。映像と音声を個別に取得し、mp4 に結合した一時ファイルを返す。
     nonisolated static func liveDownloadFile(_ stream: DownloadStream,
                                              progress: @escaping @Sendable @MainActor (Double) -> Void) async throws -> URL {
+        let videoSize = Double(contentLength(of: stream.videoURL) ?? 0)
+        let audioSize = Double(contentLength(of: stream.audioURL) ?? 0)
+        // サイズが分からなければ、映像が全体の大半を占める前提で進捗を配分する
+        let videoShare = videoSize + audioSize > 0 ? videoSize / (videoSize + audioSize) : 0.9
+
+        let videoFile = try await downloadInRanges(stream.videoURL, userAgent: stream.userAgent) { await progress($0 * videoShare) }
+        defer { try? FileManager.default.removeItem(at: videoFile) }
+        let audioFile = try await downloadInRanges(stream.audioURL, userAgent: stream.userAgent) { await progress(videoShare + $0 * (1 - videoShare)) }
+        defer { try? FileManager.default.removeItem(at: audioFile) }
+        return try await mux(video: videoFile, audio: audioFile)
+    }
+
+    /// googlevideo の adaptive URL が持つ全体サイズ（clen）
+    nonisolated private static func contentLength(of url: URL) -> Int64? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "clen" }?.value.flatMap { Int64($0) }
+    }
+
+    /// googlevideo の open-ended GET はスロットリングされるため、Range リクエストでチャンク分割して取得し、一時ファイルに書き出す。
+    nonisolated private static func downloadInRanges(_ url: URL, userAgent: String,
+                                                     progress: @escaping @Sendable (Double) async -> Void) async throws -> URL {
         let session = URLSession(configuration: .ephemeral)
         let chunkSize: Int64 = 5_000_000
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -218,8 +250,8 @@ final class DownloadManager {
             var total: Int64 = -1
             while total < 0 || offset < total {
                 try Task.checkCancellation()
-                var request = URLRequest(url: stream.url)
-                request.setValue(stream.userAgent, forHTTPHeaderField: "User-Agent")
+                var request = URLRequest(url: url)
+                request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
                 request.setValue("bytes=\(offset)-\(offset + chunkSize - 1)", forHTTPHeaderField: "Range")
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -249,6 +281,36 @@ final class DownloadManager {
             try? FileManager.default.removeItem(at: tempURL)
             throw error
         }
+    }
+
+    /// 映像と音声を再エンコードせずに mp4 へ結合し、一時ファイルを返す
+    nonisolated static func mux(video: URL, audio: URL) async throws -> URL {
+        // YouTube の DASH は moov の長さを補正しないと尺が約 2 倍に解釈され、結合後の動画も伸びる
+        try FragmentedMP4.correctDurations(inFileAt: video)
+        try FragmentedMP4.correctDurations(inFileAt: audio)
+        // 一時ファイルには拡張子が無く、AVFoundation が形式を判別できないため MIME を明示する
+        let videoAsset = AVURLAsset(url: video, options: [AVURLAssetOverrideMIMETypeKey: "video/mp4"])
+        let audioAsset = AVURLAsset(url: audio, options: [AVURLAssetOverrideMIMETypeKey: "audio/mp4"])
+        guard let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
+              let audioTrack = try await audioAsset.loadTracks(withMediaType: .audio).first else {
+            throw DownloadError.missingTrack
+        }
+
+        let composition = AVMutableComposition()
+        guard let compositionVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let compositionAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw DownloadError.missingTrack
+        }
+        try compositionVideo.insertTimeRange(try await videoTrack.load(.timeRange), of: videoTrack, at: .zero)
+        compositionVideo.preferredTransform = try await videoTrack.load(.preferredTransform)
+        try compositionAudio.insertTimeRange(try await audioTrack.load(.timeRange), of: audioTrack, at: .zero)
+
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
+            throw DownloadError.exportUnavailable
+        }
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+        try await export.export(to: output, as: .mp4)
+        return output
     }
 
     /// サムネイルをダウンロードして保存する。保存できたらファイル名を返す。
