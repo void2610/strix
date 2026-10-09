@@ -73,6 +73,20 @@ iOS 版と同じアプリターゲットを Mac Catalyst でビルドする（�
 - **Sandbox**: Mac では App Sandbox が有効なため、通信には `ENABLE_OUTGOING_NETWORK_CONNECTIONS`（`com.apple.security.network.client`）が必須。iOS では効かない設定なので iOS 版だけ見ていると欠落に気付かない
 - **Mac で無効な機能**: Live Activity（ActivityKit が Mac Catalyst で使えない。ウィジェット拡張は iOS のみ埋め込む）
 
+### 配布（MornNotary で署名・公証）
+
+[MornNotary](https://github.com/matsufriends/MornNotary)（private）で Developer ID 署名と公証を受ける。Apple Developer Program に加入していないため、Developer ID 証明書は MornNotary 側の所有者のものを使う（アプリは証明書の所有者名義で署名される）。
+
+```bash
+scripts/sign-mac.sh            # build/mac/Strix-signed.zip に出力
+scripts/sign-mac.sh <出力先>
+```
+
+- **ビルド**: Release 構成をアドホック署名でビルドする。開発用プロファイルを埋め込むと、MornNotary が Developer ID で署名し直したあとのアプリと食い違うため
+- **entitlements**: アドホック署名は `get-task-allow` を自動で付けるが、公証はこれを拒否し、MornNotary は entitlements を引き継いで署名し直す。そのためビルド設定から生成された entitlements からこれだけを外して署名し直す。`CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` は Sandbox と通信許可まで消えるので使わない
+- **依頼に必要なもの**: `gh auth login` 済みで、MornNotary リポジトリへの書き込み権限があること。依頼ブランチと Artifact は `sign.sh` が自動で削除する
+- **確認**: `spctl -a -vv -t execute Strix.app` が `source=Notarized Developer ID` で accepted になること
+
 ## テスト
 
 ```bash

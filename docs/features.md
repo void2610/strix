@@ -7,7 +7,7 @@
 - **PiP（ピクチャ・イン・ピクチャ）**: AVPlayerViewController subclass で実装
 - **音声専用モード**: 再生に使うクライアント（通常は VISIONOS）の `adaptiveFormats` から AAC 音声ストリームのみ取得
 - **ミニプレイヤー**: 動画部分を下スワイプで画面右下の小窓に最小化。映像がリアルタイムで流れ続け、タップでフルスクリーン復帰。ドラッグで画面内を自由に移動可能
-- **Mac 版**: Mac Catalyst で同じコードを Mac でも動かす（Live Activity は Mac では無効）
+- **Mac 版**: Mac Catalyst で同じコードを Mac でも動かす（Live Activity は Mac では無効）。MornNotary で Developer ID 署名・公証した ZIP を配布できる
 - **ダウンロード & オフライン再生**: 720p 以下の映像と音声を取得して 1 つの mp4 に結合して端末に保存し、ネットワークなしで再生。コンテキストメニューから開始し、アカウント > ダウンロードで一覧・進捗確認・削除。再生時はローカルファイルがあれば自動的に優先される（`DownloadManager` / `DownloadedVideo`）
 
 ## 検索・ブラウジング

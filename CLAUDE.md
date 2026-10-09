@@ -22,6 +22,9 @@ xcodebuild -resolvePackageDependencies -project Strix.xcodeproj
 xcodebuild -project Strix.xcodeproj -scheme Strix \
   -destination 'platform=macOS,variant=Mac Catalyst' build \
   2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED"
+
+# 配布用に MornNotary で署名・公証した ZIP を作る（build/mac/Strix-signed.zip に出力）
+scripts/sign-mac.sh
 ```
 
 ## フォーマット
