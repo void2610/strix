@@ -15,6 +15,15 @@ xcodebuild -project Strix.xcodeproj -scheme Strix \
 xcodebuild -resolvePackageDependencies -project Strix.xcodeproj
 ```
 
+## Mac 版（Mac Catalyst）
+
+```bash
+# Mac 版を Debug ビルド（この Mac で動作確認する用）
+xcodebuild -project Strix.xcodeproj -scheme Strix \
+  -destination 'platform=macOS,variant=Mac Catalyst' build \
+  2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED"
+```
+
 ## フォーマット
 
 ```bash

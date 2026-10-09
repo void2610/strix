@@ -66,6 +66,13 @@ xcodebuild -project Strix.xcodeproj -scheme Strix -showdestinations
 xcodebuild -resolvePackageDependencies -project Strix.xcodeproj
 ```
 
+## Mac 版（Mac Catalyst）
+
+iOS 版と同じアプリターゲットを Mac Catalyst でビルドする（ネイティブ macOS は UIKit 依存の書き分けが多いため見送り）。
+
+- **Sandbox**: Mac では App Sandbox が有効なため、通信には `ENABLE_OUTGOING_NETWORK_CONNECTIONS`（`com.apple.security.network.client`）が必須。iOS では効かない設定なので iOS 版だけ見ていると欠落に気付かない
+- **Mac で無効な機能**: Live Activity（ActivityKit が Mac Catalyst で使えない。ウィジェット拡張は iOS のみ埋め込む）
+
 ## テスト
 
 ```bash
