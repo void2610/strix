@@ -4,6 +4,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 OUT_DIR=${1:-build/mac}
+# 手元で実行する sign.sh が上流の変更で勝手に変わらないよう、内容を確認したコミットに固定する
+MORNNOTARY_COMMIT=dec5ef5cc0f9278fbabff91c69c88f3bb5fdabde
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -26,4 +28,6 @@ rm -rf "$OUT_DIR/Strix.app" "$OUT_DIR/Strix-signed.zip"
 ditto "$APP" "$OUT_DIR/Strix.app"
 
 gh repo clone matsufriends/MornNotary "$WORK/MornNotary" -- --quiet --depth 1
+git -C "$WORK/MornNotary" fetch --quiet --depth 1 origin "$MORNNOTARY_COMMIT"
+git -C "$WORK/MornNotary" checkout --quiet --detach FETCH_HEAD
 bash "$WORK/MornNotary/sign.sh" "$OUT_DIR/Strix.app"

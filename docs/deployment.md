@@ -85,6 +85,7 @@ scripts/sign-mac.sh <出力先>
 - **ビルド**: Release 構成をアドホック署名でビルドする。開発用プロファイルを埋め込むと、MornNotary が Developer ID で署名し直したあとのアプリと食い違うため
 - **entitlements**: アドホック署名は `get-task-allow` を自動で付けるが、公証はこれを拒否し、MornNotary は entitlements を引き継いで署名し直す。そのためビルド設定から生成された entitlements からこれだけを外して署名し直す。`CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` は Sandbox と通信許可まで消えるので使わない
 - **依頼に必要なもの**: `gh auth login` 済みで、MornNotary リポジトリへの書き込み権限があること。依頼ブランチと Artifact は `sign.sh` が自動で削除する
+- **MornNotary の固定**: 手元で実行する `sign.sh` は、内容を確認したコミット（スクリプトの `MORNNOTARY_COMMIT`）に固定している。MornNotary 側を更新したら `sign.sh` の差分を確認してから値を上げる。署名と公証そのものは MornNotary 側の Actions（main の `sign.yml`）が行うため、こちらからは固定できない
 - **確認**: `spctl -a -vv -t execute Strix.app` が `source=Notarized Developer ID` で accepted になること
 
 ## テスト
