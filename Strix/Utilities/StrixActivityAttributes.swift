@@ -5,6 +5,8 @@
 //  Created by Shuya Izumi on 2026/04/08.
 //
 
+// Mac Catalyst では ActivityKit の型が使えず、Live Activity 自体も無効にしているため定義しない
+#if !targetEnvironment(macCatalyst)
 import ActivityKit
 
 /// ダイナミックアイランド Live Activity の属性定義。
@@ -20,3 +22,4 @@ struct StrixActivityAttributes: ActivityAttributes {
         var durationSeconds: Double
     }
 }
+#endif
