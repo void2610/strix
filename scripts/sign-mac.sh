@@ -31,3 +31,7 @@ gh repo clone matsufriends/MornNotary "$WORK/MornNotary" -- --quiet --depth 1
 git -C "$WORK/MornNotary" fetch --quiet --depth 1 origin "$MORNNOTARY_COMMIT"
 git -C "$WORK/MornNotary" checkout --quiet --detach FETCH_HEAD
 bash "$WORK/MornNotary/sign.sh" "$OUT_DIR/Strix.app"
+
+# sign.sh は渡したアプリを変更しないため、送った未署名のコピーと取り違えないよう署名済みのものに置き換える
+rm -rf "$OUT_DIR/Strix.app"
+ditto -x -k "$OUT_DIR/Strix-signed.zip" "$OUT_DIR"

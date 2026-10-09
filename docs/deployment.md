@@ -78,7 +78,7 @@ iOS 版と同じアプリターゲットを Mac Catalyst でビルドする（�
 [MornNotary](https://github.com/matsufriends/MornNotary)（private）で Developer ID 署名と公証を受ける。Apple Developer Program に加入していないため、Developer ID 証明書は MornNotary 側の所有者のものを使う（アプリは証明書の所有者名義で署名される）。
 
 ```bash
-scripts/sign-mac.sh            # build/mac/Strix-signed.zip に出力
+scripts/sign-mac.sh            # build/mac に署名済みの Strix.app と配布用の Strix-signed.zip を出力
 scripts/sign-mac.sh <出力先>
 ```
 
@@ -86,7 +86,7 @@ scripts/sign-mac.sh <出力先>
 - **entitlements**: アドホック署名は `get-task-allow` を自動で付けるが、公証はこれを拒否し、MornNotary は entitlements を引き継いで署名し直す。そのためビルド設定から生成された entitlements からこれだけを外して署名し直す。`CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` は Sandbox と通信許可まで消えるので使わない
 - **依頼に必要なもの**: `gh auth login` 済みで、MornNotary リポジトリへの書き込み権限があること。依頼ブランチと Artifact は `sign.sh` が自動で削除する
 - **MornNotary の固定**: 手元で実行する `sign.sh` は、内容を確認したコミット（スクリプトの `MORNNOTARY_COMMIT`）に固定している。MornNotary 側を更新したら `sign.sh` の差分を確認してから値を上げる。署名と公証そのものは MornNotary 側の Actions（main の `sign.yml`）が行うため、こちらからは固定できない
-- **確認**: `spctl -a -vv -t execute Strix.app` が `source=Notarized Developer ID` で accepted になること
+- **確認**: `spctl -a -vv -t execute build/mac/Strix.app` が `source=Notarized Developer ID` で accepted になること
 
 ## テスト
 
