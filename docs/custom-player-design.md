@@ -43,8 +43,7 @@ Strix/Features/Player/
 │   ├─ PlayerSeekBar.swift             シークバー単体（DragGesture）
 │   ├─ PlayerSettingsMenu.swift        ⋯ メニュー（倍速選択・トグル群）
 │   ├─ PlayerDoubleTapSkipOverlay.swift ダブルタップ波紋
-│   ├─ PlayerOverlayController.swift   表示制御（@Observable）
-│   └─ PlayerBackgroundObserver.swift  バックグラウンド処理（旧 _PlayerViewController 相当）
+│   └─ PlayerOverlayController.swift   表示制御（@Observable）
 ```
 
 - **分割の理由:** 各領域を独立させておくと、後で PiP ボタン追加・AirPlay 追加の際に該当ファイルだけ触れば済む
@@ -290,33 +289,12 @@ func skipBackward(_ seconds: Double = 10) { ... }
 
 ### 7-3. `AVPlayerLayer` + バックグラウンド再生
 
-現状の `_PlayerViewController.didEnterBackground` の仕組みを `PlayerBackgroundObserver` に移植:
+背景・ロックでの再生継続は、`AVPlayer.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible` で行う（`PlayerViewModel` が AVPlayer を作るときに設定）。layer を付けたままでも背景では音声を流し続け、自動 PiP が始まれば映像も続く。全画面・ミニプレイヤーのどちらの layer にも同じように効く。
 
-```swift
-@MainActor
-final class PlayerBackgroundObserver: ObservableObject {
-    weak var playerLayerView: PlayerLayerUIView?
-    private let player: AVPlayer
-    private var wasPlaying = false
+当初は背景移行時に `AVPlayerLayer.player = nil` で layer から切り離していたが、次の理由で廃止した。
 
-    init(player: AVPlayer) {
-        self.player = player
-        NotificationCenter.default.addObserver(...)
-    }
-
-    @objc func didEnterBackground() {
-        wasPlaying = player.rate > 0
-        playerLayerView?.detachPlayer()   // AVPlayerLayer.player = nil
-        if wasPlaying { player.play() }
-    }
-    @objc func willEnterForeground() {
-        playerLayerView?.attachPlayer(player)
-        if wasPlaying { player.play() }
-    }
-}
-```
-
-**`AVPlayerLayer.player = nil` でも同じ効果が得られるか？** → `AVPlayerLayer` と `AVPlayerViewController` は内部実装が異なる可能性があるため、**初回実装時に実機検証**。効かない場合の代替策: `AVPlayer.automaticallyWaitsToMinimizeStalling = false` + `AVAudioSession.setCategory(.playback)` の組み合わせで対応する。
+- 全画面では「PiP が使える」だけで切り離しを省いていたため、PiP が始まらないロック時や、自動 PiP をオフにしている端末で再生が止まった
+- ミニプレイヤーの layer は切り離していなかったため、最小化中に背景へ移ると止まった
 
 ### 7-4. `NowPlayingManager` / `LiveActivityManager` / `PlaybackTracker`
 
@@ -391,7 +369,7 @@ Button {
 
 | リスク | 検証方法 | 対策 |
 |---|---|---|
-| `AVPlayerLayer.player = nil` のバックグラウンド自動停止回避が効かない | Phase 1 で実機検証 | `AVAudioSession` 設定の強化 + `play()` の明示呼び出し |
+| 背景・ロックへの移行で再生が止まる | 実機で背景移行（PiP あり・なし）とロックを確認する。シミュレータは背景移行で映像の再生を止めないため再現しない | `AVPlayer.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible` |
 | ダブルタップとシングルタップの衝突で反応が遅い | Phase 3 で体感確認 | `highPriorityGesture` で順序固定、タップ判定遅延は許容 |
 | スクラブ中の時刻表示ちらつき | Phase 2 で確認 | `isScrubbing` フラグで `PeriodicTimeObserver` からの更新を無視 |
 | フルスクリーン時の NavigationStack 衝突 | Phase 3 で確認 | `isFullScreen` 中は他の UI を `.zIndex(-1)` + 無効化 |
