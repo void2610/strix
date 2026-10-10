@@ -3,7 +3,18 @@
 ## 方針
 
 - 無料 Apple ID + ローカルビルド（Apple Developer Program 不使用）
-- 7日で証明書失効 → 定期的に再ビルド＆インストール
+- 署名に埋め込むプロファイルが 7 日で失効 → 常時起動の Mac（m1server）が毎晩ビルドして入れ直す（nix-config の `strix-nightly-install-server.nix`）
+  - ビルド前に main を取り込む
+  - Xcode は期限内のプロファイルを使い回し、入れ直すだけでは期限が延びないため、期限まで 2 日を切ったプロファイルは消して作り直させる
+
+## 署名（開発用証明書の共有）
+
+無料 Apple ID は有効な開発用証明書を 1 枚しか持てない。別の Mac の Xcode が証明書を新しく作ると、それまでの証明書は失効する。
+
+- 失効した証明書で署名したアプリは、iPhone が失効を検知した時点（数時間〜1 日ほど後）から起動を拒否される。開いた瞬間に閉じ、クラッシュログは残らない
+- そのため署名する Mac（手元の Mac と m1server）には同じ証明書を入れる。nix-config が sops で配り、専用キーチェーン `~/Library/Keychains/apple-development.keychain-db` に取り込む（`apple-development-signing.nix`）
+- 別の Mac で実機ビルドするときは、先に nix-config でこの証明書を配る。配る前に Xcode でビルドすると新しい証明書が作られ、他の Mac で入れたアプリが起動しなくなる
+- 失効は `security verify-cert -c <証明書の PEM> -p codeSign -R ocsp` で確かめる。`security find-identity` はキャッシュのため失効を見落とすことがある
 
 ## デバイス情報（iPhone 16）
 
