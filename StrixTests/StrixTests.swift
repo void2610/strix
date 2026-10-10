@@ -1267,6 +1267,20 @@ struct PlayerViewModelTests {
         #expect(!vm.isLoadingStream)
     }
 
+    /// 背景・ロックへ移っても止まらないよう、映像を表示中でも背景で再生を続ける設定の AVPlayer を作ること
+    @Test func loadCreatesPlayerThatKeepsPlayingInBackground() async throws {
+        let dummyURL = URL(string: "https://example.com/test.m3u8")!
+        let youtubeClient = YouTubeClient(fetchVideo: { _ in
+            VideoInfo(streamURL: dummyURL, audioOnlyURL: nil, title: "テスト動画", thumbnailURL: "https://example.com/thumb.jpg", channelId: nil, channelName: nil, channelAvatarURL: nil)
+        })
+        let vm = PlayerViewModel(youtubeClient: youtubeClient, contentClient: .mock())
+        let ctx = try makeInMemoryContext()
+
+        await vm.load(videoID: "abc123", modelContext: ctx)
+
+        #expect(vm.player?.audiovisualBackgroundPlaybackPolicy == .continuesIfPossible)
+    }
+
     @Test func loadSavesVideoToHistory() async throws {
         let dummyURL = URL(string: "https://example.com/test.m3u8")!
         let youtubeClient = YouTubeClient(fetchVideo: { _ in

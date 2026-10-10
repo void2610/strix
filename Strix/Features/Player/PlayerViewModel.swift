@@ -137,6 +137,8 @@ final class PlayerViewModel {
             }
             videoInfo = info
             let avPlayer = AVPlayer(playerItem: makePlayerItem(info: info, audioOnly: isAudioOnly))
+            // 既定では映像を表示中の layer があると背景・ロックへの移行で止まるため、PiP が始まらない場合も音声だけで再生を続けさせる
+            avPlayer.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
             StreamResourceLoader.attachPlayer(avPlayer, to: avPlayer.currentItem)
             player = avPlayer
             // PiP コントロールで再生再開すると rate が 1.0 に戻るため、

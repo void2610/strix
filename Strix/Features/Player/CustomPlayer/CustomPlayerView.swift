@@ -68,11 +68,9 @@ struct CustomPlayerView: View {
         ZStack {
             // MARK: 映像
             if let player {
-                // バックグラウンド自動停止回避は PlayerLayerView 内部の Coordinator で完結
                 PlayerLayerView(
                     player: player,
-                    onLayerReady: { pipManager.configure(with: $0) },
-                    pipHandlesBackground: { pipManager.isSupported && pipManager.isPossible && !vm.isAudioOnly }
+                    onLayerReady: { pipManager.configure(with: $0) }
                 )
 
                 // 音声のみモード: 映像トラックがない（またはフォールバックの低画質映像）ため
