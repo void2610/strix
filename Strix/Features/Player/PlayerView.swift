@@ -7,7 +7,6 @@
 
 import SwiftUI
 import AVFoundation
-import AVKit
 import UIKit
 import SwiftData
 import NukeUI
@@ -707,110 +706,6 @@ private struct CommentHeightKey: PreferenceKey {
     static let defaultValue: [Bool: CGFloat] = [:]
     static func reduce(value: inout [Bool: CGFloat], nextValue: () -> [Bool: CGFloat]) {
         value.merge(nextValue()) { _, new in new }
-    }
-}
-
-// MARK: - AVPlayer バックグラウンド対応ビュー
-
-/// `AVPlayerViewController` をラップしつつ、バックグラウンド移行時に
-/// `player` プロパティを一時的に `nil` にすることで iOS の自動停止を回避する。
-/// 標準の再生コントロール（シークバー・再生/停止ボタン等）はそのまま使える。
-private struct AVPlayerLayerView: UIViewControllerRepresentable {
-    let player: AVPlayer
-
-    func makeUIViewController(context: Context) -> _PlayerViewController {
-        _PlayerViewController(player: player)
-    }
-
-    func updateUIViewController(_ vc: _PlayerViewController, context: Context) {}
-}
-
-/// `AVPlayerViewController` のサブクラス。
-/// `didEnterBackground` で `player` を一時的に切り離して iOS の自動停止を回避しつつ、
-/// バックグラウンド中も再生を継続させるため、直後に `playerRef.play()` で再開する。
-/// PiP 中はこの処理をスキップする。
-final class _PlayerViewController: AVPlayerViewController, AVPlayerViewControllerDelegate {
-    /// アプリ内で同時に存在できる VC は1つだけ。新しい VC が init されたとき
-    /// 古い VC が PiP 中であれば stopPictureInPicture() で閉じる。
-    private static weak var current: _PlayerViewController?
-
-    private let playerRef: AVPlayer
-    /// PiP がアクティブかどうかをデリゲートで追跡する
-    private var isPiPActive = false
-    /// バックグラウンド移行前に再生中だったか（復帰時の play 再開判定用）
-    private var wasPlayingBeforeBackground = false
-
-    init(player: AVPlayer) {
-        self.playerRef = player
-        super.init(nibName: nil, bundle: nil)
-        // 既存の VC を停止してから自分をアクティブにする
-        // player = nil にすることで PiP も終了する
-        _PlayerViewController.current?.closeAndStop()
-        _PlayerViewController.current = self
-        self.player = player
-        self.delegate = self
-        // NowPlayingManager が MPNowPlayingInfoCenter を管理するため、
-        // AVPlayerViewController の自動更新を無効化する
-        self.updatesNowPlayingInfoCenter = false
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// 再生を停止し、PiP が起動中であれば player = nil で終了させる
-    func closeAndStop() {
-        playerRef.pause()
-        player = nil
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(didEnterBackground),
-            name: UIApplication.didEnterBackgroundNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(willEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
-            object: nil
-        )
-    }
-
-    deinit { NotificationCenter.default.removeObserver(self) }
-
-    /// バックグラウンド移行時: AVPlayerViewController から AVPlayer を切り離し、
-    /// iOS による自動停止を回避する。切り離す際に内部で pause() される可能性があるため、
-    /// 直後に playerRef.play() を呼んで音声再生を継続させる。
-    /// PiP 中は切り離すと PiP が終了するためスキップする。
-    @objc private func didEnterBackground() {
-        guard !isPiPActive else { return }
-        wasPlayingBeforeBackground = playerRef.rate > 0
-        player = nil
-        if wasPlayingBeforeBackground {
-            playerRef.play()
-        }
-    }
-
-    /// フォアグラウンド復帰直前: ViewController にプレイヤーを再接続して映像表示を再開する
-    @objc private func willEnterForeground() {
-        player = playerRef
-        // player 再接続時にも内部で pause() される場合があるため、元の再生状態を復元する
-        if wasPlayingBeforeBackground {
-            playerRef.play()
-        }
-        wasPlayingBeforeBackground = false
-    }
-
-    // MARK: - AVPlayerViewControllerDelegate
-
-    func playerViewControllerDidStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
-        isPiPActive = true
-    }
-
-    func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
-        isPiPActive = false
     }
 }
 
