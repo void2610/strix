@@ -3,7 +3,7 @@
 ## コア機能
 
 - **広告なし動画再生**: Innertube API 直接呼び出しによるストリーム取得
-- **バックグラウンド再生**: `AVAudioSession(.playback)` + `UIBackgroundModes: audio`
+- **バックグラウンド再生**: `AVAudioSession(.playback)` + `UIBackgroundModes: audio` + `AVPlayer.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible`（映像を表示中でも背景・ロックで止めない）
 - **PiP（ピクチャ・イン・ピクチャ）**: AVPlayerViewController subclass で実装
 - **音声専用モード**: 再生に使うクライアント（通常は VISIONOS）の `adaptiveFormats` から AAC 音声ストリームのみ取得
 - **ミニプレイヤー**: 動画部分を下スワイプで画面右下の小窓に最小化。映像がリアルタイムで流れ続け、タップでフルスクリーン復帰。ドラッグで画面内を自由に移動可能
