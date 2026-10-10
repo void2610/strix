@@ -12,6 +12,8 @@ import WebKit
 /// VISIONOS → IOS（認証付き）→ WEB（認証付き）→ WebPage の順にフォールバックする。
 struct YouTubeClient {
     var fetchVideo: (String) async throws -> VideoInfo
+    /// 視聴履歴の送信先を決める（引数は動画 ID と、再生に使ったクライアントの /player が返したトラッキング URL）
+    var resolvePlaybackTracking: (String, PlaybackTrackingURLs?) async -> PlaybackTrackingURLs? = { _, fromPlayer in fromPlayer }
 }
 
 struct VideoInfo {
@@ -24,7 +26,7 @@ struct VideoInfo {
     let channelId: String?
     let channelName: String?
     let channelAvatarURL: URL?
-    /// 再生トラッキング URL（YouTube に視聴履歴を記録するため）
+    /// 再生に使ったクライアントのトラッキング URL（ログインアカウントには紐づかないため、視聴履歴の送信先は resolvePlaybackTracking で決める）
     var playbackTrackingURLs: PlaybackTrackingURLs? = nil
 }
 
@@ -72,19 +74,8 @@ extension YouTubeClient {
 
             // IOS も HLS を返すが、SABR 移行済み動画では HLS が無く失敗する
             do {
-                var info = try await fetchWithIOS(videoID: videoID)
+                let info = try await fetchWithIOS(videoID: videoID)
                 strixLog("player[IOS] 成功")
-                if info.playbackTrackingURLs == nil {
-                    // 並列実行中の WEB から視聴履歴トラッキング URL を補完する。
-                    // 再生開始を遅らせないよう最大 2 秒で打ち切る
-                    strixLog("player[IOS] tracking URL なし、WEB で補完を試みる")
-                    let deadline = Task {
-                        try? await Task.sleep(for: .seconds(2))
-                        webTask.cancel()
-                    }
-                    info.playbackTrackingURLs = (try? await webTask.value)?.playbackTrackingURLs
-                    deadline.cancel()
-                }
                 return info
             } catch {
                 strixLog("player[IOS] 失敗: \(error.localizedDescription)")
@@ -108,6 +99,11 @@ extension YouTubeClient {
                 strixLog("player[WebPage] 失敗: \(error.localizedDescription)")
                 throw error
             }
+        },
+        resolvePlaybackTracking: { videoID, fromPlayer in
+            // ログイン中は認証付き WEB の URL に送らないと履歴に残らないため、再生に使ったクライアントの URL は使わない
+            guard AuthState.shared.isSignedIn else { return fromPlayer }
+            return await fetchAccountTrackingURLs(videoID: videoID)
         }
     )
 
@@ -223,9 +219,6 @@ extension YouTubeClient {
 
     /// VISIONOS クライアントで /player を叩く。PO Token 不要で、SABR 移行済み動画にも音声込み・ABR の HLS manifest を返す。
     private static func fetchWithVisionOS(videoID: String) async throws -> VideoInfo {
-        // 視聴履歴をアカウントに記録するため、認証付き WEB のトラッキング URL を並行取得する
-        let accountTracking = Task { await fetchAccountTrackingURLs(videoID: videoID) }
-        defer { accountTracking.cancel() }
         let json = try await sendPlayerRequest(visionOSPlayerRequest(videoID: videoID))
         let meta = extractVideoMeta(from: json, videoID: videoID)
 
@@ -234,11 +227,9 @@ extension YouTubeClient {
               let streamURL = URL(string: hlsString) else {
             throw YouTubeClientError.streamNotFound
         }
-        // visionos 自身のトラッキングはアカウント非紐付けのため認証付き WEB のものを使うが、取得済みの HLS の再生開始は 2 秒までしか遅らせない
-        let tracking = await value(of: accountTracking, within: .seconds(2)) ?? meta.trackingURLs
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
-                         playbackTrackingURLs: tracking)
+                         playbackTrackingURLs: meta.trackingURLs)
     }
 
     // MARK: - WEB クライアント（Cookie 認証、combined formats を返す）
@@ -338,22 +329,6 @@ extension YouTubeClient {
 
     // MARK: - 共通ヘルパー
 
-    /// 補助的な取得を limit まで待ち、間に合わなければ取得を中断して nil を返す（再生開始を補助情報の取得で遅らせないため）
-    static func value<T: Sendable>(of task: Task<T?, Never>, within limit: Duration) async -> T? {
-        await withTaskGroup(of: T?.self) { group in
-            group.addTask { await task.value }
-            group.addTask {
-                try? await Task.sleep(for: limit)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            // 待ちを打ち切っても取得側が走り続けると、group がその完了を待ってしまう
-            task.cancel()
-            group.cancelAll()
-            return first
-        }
-    }
-
     /// /player リクエストを送信し、レスポンス JSON を返す。再生不可ならエラーを投げる。
     private static func sendPlayerRequest(_ request: URLRequest) async throws -> [String: Any] {
         let data: Data
@@ -432,13 +407,21 @@ extension YouTubeClient {
     }
 
     /// 視聴履歴用のトラッキング URL を認証付き WEB クライアントから取得する。
-    /// visionos 等の非認証クライアントのトラッキングはログインアカウントに紐づかないため、これを使う。
+    /// visionos 等の非認証クライアントのトラッキングはログインアカウントに紐づかず、送っても履歴に残らないため、これを使う。
     static func fetchAccountTrackingURLs(videoID: String) async -> PlaybackTrackingURLs? {
-        // 未サインインでは取得しても再生統計をアカウントに紐づけられないため /player を打たない
-        guard AuthState.shared.isSignedIn else { return nil }
         let body: [String: Any] = ["videoId": videoID, "contentCheckOk": true, "racyCheckOk": true]
-        guard let json = try? await InnertubeRequest.fetchWeb(url: YouTubeConstants.playerURL, body: body) else { return nil }
-        return extractTrackingURLs(from: json)
+        // 応答全体は 200KB を超えて弱い電波では取得に時間がかかるため、トラッキング URL だけを返させる
+        let headers = ["X-Goog-FieldMask": "playabilityStatus.status,playbackTracking"]
+        for delay: Duration in [.zero, .seconds(2), .seconds(5)] {
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            if Task.isCancelled { return nil }
+            if let json = try? await InnertubeRequest.fetchWeb(url: YouTubeConstants.playerURL, body: body, headers: headers),
+               let urls = extractTrackingURLs(from: json) {
+                return urls
+            }
+        }
+        strixLog("tracking: アカウント用の URL を取得できませんでした")
+        return nil
     }
 
     /// adaptiveFormats から音声のみモードで使う URL を選ぶ。
