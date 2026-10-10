@@ -5,8 +5,21 @@
 //  Created by Shuya Izumi on 2026/04/08.
 //
 
-import ActivityKit
 import AVFoundation
+
+#if targetEnvironment(macCatalyst)
+/// Mac には Dynamic Island もロック画面の Live Activity も無く ActivityKit が使えないため、呼び出し側を変えずに何もしない
+@MainActor
+final class LiveActivityManager {
+    static let shared = LiveActivityManager()
+    private init() {}
+
+    func start(title: String, channelName: String, thumbnailURL: String, player: AVPlayer) {}
+    func update(isPlaying: Bool, player: AVPlayer) {}
+    func stop() {}
+}
+#else
+import ActivityKit
 
 /// ダイナミックアイランド Live Activity の開始・更新・終了を管理する。
 @MainActor
@@ -79,3 +92,4 @@ final class LiveActivityManager {
         return CMTimeGetSeconds(duration)
     }
 }
+#endif

@@ -3,6 +3,7 @@
 --swiftversion 6.0
 --rules blankLinesAtEndOfScope,braces,consecutiveBlankLines,duplicateImports,elseOnSameLine,indent,leadingDelimiters,linebreakAtEndOfFile,linebreaks,semicolons,spaceAroundBraces,spaceAroundBrackets,spaceAroundComments,spaceAroundGenerics,spaceAroundOperators,spaceAroundParens,spaceInsideBraces,spaceInsideBrackets,spaceInsideComments,spaceInsideGenerics,spaceInsideParens,trailingSpace
 --indent 4
+--ifdef no-indent
 --ranges no-space
 --guardelse same-line
 --elseposition same-line
