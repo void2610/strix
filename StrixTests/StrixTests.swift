@@ -804,31 +804,6 @@ struct YouTubeConstantsTests {
     }
 }
 
-// MARK: - 上限付きの待ち合わせテスト
-
-struct TimeLimitedValueTests {
-
-    /// 上限内に終わった取得の値をそのまま返すこと
-    @Test func returnsValueFinishedWithinLimit() async {
-        let task = Task<Int?, Never> { 42 }
-        #expect(await YouTubeClient.value(of: task, within: .seconds(2)) == 42)
-    }
-
-    /// 上限を過ぎた取得は待たずに nil を返し、取得自体も中断すること（再生開始をトラッキング取得で遅らせない）
-    @Test func returnsNilAndCancelsTaskWhenLimitExceeded() async {
-        let task = Task<Int?, Never> {
-            try? await Task.sleep(for: .seconds(30))
-            return 1
-        }
-        let clock = ContinuousClock()
-        let start = clock.now
-        let value = await YouTubeClient.value(of: task, within: .milliseconds(100))
-        #expect(value == nil)
-        #expect(clock.now - start < .seconds(5))
-        #expect(task.isCancelled)
-    }
-}
-
 // MARK: - ContentClient 結合テスト
 
 struct ContentClientTests {
@@ -1279,6 +1254,44 @@ struct PlayerViewModelTests {
         await vm.load(videoID: "abc123", modelContext: ctx)
 
         #expect(vm.player?.audiovisualBackgroundPlaybackPolicy == .continuesIfPossible)
+    }
+
+    @MainActor
+    private final class ResolveRecorder {
+        private(set) var calls: [(videoID: String, fromPlayer: String?)] = []
+        func record(_ videoID: String, _ fromPlayer: PlaybackTrackingURLs?) {
+            calls.append((videoID, fromPlayer?.videostatsPlaybackURL))
+        }
+    }
+
+    /// 視聴履歴の送信先は、再生に使ったクライアントの URL を添えて resolvePlaybackTracking に決めさせること
+    @MainActor
+    @Test func loadResolvesPlaybackTrackingWithPlayerURLs() async throws {
+        let dummyURL = URL(string: "https://example.com/test.m3u8")!
+        let fromPlayer = PlaybackTrackingURLs(videostatsPlaybackURL: "https://example.com/playback",
+                                              videostatsWatchtimeURL: "https://example.com/watchtime")
+        let recorder = ResolveRecorder()
+        let youtubeClient = YouTubeClient(
+            fetchVideo: { _ in
+                VideoInfo(streamURL: dummyURL, audioOnlyURL: nil, title: "テスト動画", thumbnailURL: "https://example.com/thumb.jpg",
+                          channelId: nil, channelName: nil, channelAvatarURL: nil, playbackTrackingURLs: fromPlayer)
+            },
+            resolvePlaybackTracking: { videoID, urls in
+                await recorder.record(videoID, urls)
+                return nil
+            }
+        )
+        let vm = PlayerViewModel(youtubeClient: youtubeClient, contentClient: .mock())
+
+        await vm.load(videoID: "abc123", modelContext: try makeInMemoryContext())
+        // 送信先は再生開始を待たせないよう非同期に決めるため、呼ばれるまで待つ
+        for _ in 0..<100 where recorder.calls.isEmpty {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls.first?.videoID == "abc123")
+        #expect(recorder.calls.first?.fromPlayer == "https://example.com/playback")
     }
 
     @Test func loadSavesVideoToHistory() async throws {
@@ -1889,22 +1902,65 @@ struct PlaybackTrackerTests {
         #expect(cpn1 != cpn2)
     }
 
-    @Test func appendParamAddsQuestionMarkForFirstParam() {
-        let result = PlaybackTracker.appendParam("https://example.com/path", "key", "value")
-        #expect(result == "https://example.com/path?key=value")
+    /// 同名のキーは上書きし、YouTube が付けた他の値はエンコードごと残すこと（追記で重複させない）
+    @Test func trackingURLReplacesExistingKeysAndKeepsOthers() throws {
+        let base = "https://s.youtube.com/api/stats/playback?cl=1&len=888&cmt=1&vm=CAE%3D"
+        let url = try #require(PlaybackTracker.trackingURL(base, ["ver": "2", "cmt": "12.500"]))
+        #expect(url.query(percentEncoded: true) == "cl=1&len=888&vm=CAE%3D&ver=2&cmt=12.500")
     }
 
-    @Test func appendParamAddsAmpersandForSubsequentParam() {
-        let result = PlaybackTracker.appendParam("https://example.com/path?existing=1", "key", "value")
-        #expect(result == "https://example.com/path?existing=1&key=value")
+    private static let urls = PlaybackTrackingURLs(
+        videostatsPlaybackURL: "https://s.youtube.com/api/stats/playback?docid=abc",
+        videostatsWatchtimeURL: "https://s.youtube.com/api/stats/watchtime?docid=abc"
+    )
+
+    /// 送ったリクエストを記録し、指定した順に HTTP ステータスを返す
+    @MainActor
+    private final class SendRecorder {
+        var statuses: [Int?]
+        private(set) var urls: [URL] = []
+        init(statuses: [Int?]) { self.statuses = statuses }
+        func send(_ request: URLRequest) -> Int? {
+            urls.append(request.url!)
+            return statuses.isEmpty ? 204 : statuses.removeFirst()
+        }
     }
 
-    @Test func appendParamHandlesMultipleParams() {
-        var url = "https://example.com/api"
-        url = PlaybackTracker.appendParam(url, "cpn", "abc123")
-        url = PlaybackTracker.appendParam(url, "st", "0.000")
-        url = PlaybackTracker.appendParam(url, "et", "30.000")
-        #expect(url == "https://example.com/api?cpn=abc123&st=0.000&et=30.000")
+    /// 再生開始の送信は、失敗したら成功するまで送り直すこと（履歴に残るかがこれで決まる）
+    @MainActor
+    @Test func playbackPingIsRetriedUntilSuccess() async {
+        let recorder = SendRecorder(statuses: [nil, 500, 204, 204])
+        let tracker = PlaybackTracker(send: { recorder.send($0) }, retryDelays: [.zero, .zero])
+        let task = tracker.start(player: AVPlayer()) { Self.urls }
+        tracker.stop()
+        await task.value
+        #expect(recorder.urls.count == 3)
+        #expect(recorder.urls.allSatisfy { $0.path == "/api/stats/playback" && $0.query?.contains("ver=2") == true })
+    }
+
+    /// 送信先の URL が届く前に別の動画へ移っても、見始めた動画の再生開始は送ること
+    @MainActor
+    @Test func playbackPingIsSentEvenAfterStop() async {
+        let recorder = SendRecorder(statuses: [])
+        let tracker = PlaybackTracker(send: { recorder.send($0) }, retryDelays: [.zero, .zero])
+        let task = tracker.start(player: AVPlayer()) {
+            try? await Task.sleep(for: .milliseconds(50))
+            return Self.urls
+        }
+        tracker.stop()
+        await task.value
+        #expect(recorder.urls.map(\.path) == ["/api/stats/playback"])
+    }
+
+    /// 送信先が決まらなければ何も送らないこと
+    @MainActor
+    @Test func nothingIsSentWithoutTrackingURLs() async {
+        let recorder = SendRecorder(statuses: [])
+        let tracker = PlaybackTracker(send: { recorder.send($0) }, retryDelays: [.zero, .zero])
+        let task = tracker.start(player: AVPlayer()) { nil }
+        tracker.stop()
+        await task.value
+        #expect(recorder.urls.isEmpty)
     }
 }
 

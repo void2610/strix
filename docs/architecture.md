@@ -27,12 +27,22 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
 ### ストリーム取得（YouTubeClient）
 
 4段フォールバック:
-1. **VISIONOS クライアント**（HLS） — 認証なし・`visitorData` 必須（無いと `LOGIN_REQUIRED`）。PO Token 不要で、SABR 移行済み動画にも `hlsManifestUrl` を返す。視聴履歴は認証付き WEB のトラッキング URL で記録する。「子ども向け」動画は再生不可
+1. **VISIONOS クライアント**（HLS） — 認証なし・`visitorData` 必須（無いと `LOGIN_REQUIRED`）。PO Token 不要で、SABR 移行済み動画にも `hlsManifestUrl` を返す。「子ども向け」動画は再生不可
 2. **IOS クライアント**（HLS） — Cookie + SAPISIDHASH 認証。`hlsManifestUrl` を取得（SABR 移行済み動画では返らない）
 3. **WEB クライアント**（combined formats） — Cookie + SAPISIDHASH 認証。`formats` / `hlsManifestUrl` を取得
 4. **WebPage**（WKWebView + fetch/XHR インターセプト） — モバイル版 YouTube を読み込み、再生を開始させた後、`googlevideo.com/videoplayback` への fetch/XHR リクエストをフックして署名デコード済み URL を取得。combined format（itag 18/22）を優先
 
 ANDROID_VR（1.65.10）は 2026-08-17 以降、itag18 を含む全フォーマットが 403 になったため再生経路から外した。それ以前から PO Token 未提示のストリームは「先頭約 1 分（2.5MB 前後）だけ取得でき、それより先の Range は 403」になっており、`/player` が URL を返しても再生が途中で止まる。ストリームの可否は URL の有無ではなく末尾まで取得できるかで判定する（`YouTubeClientTests` の結合テスト）。
+
+### 視聴履歴のアカウント記録（PlaybackTracker）
+
+再生とは別に、`/player` の `playbackTracking` にある URL へ送信して、YouTube アカウントの再生履歴に記録する。
+
+- **履歴に載るのは再生開始の送信**: `videostatsPlaybackUrl` への 1 回の送信で履歴に載る。`videostatsWatchtimeUrl` はどこまで見たかの更新で、これだけでは載らない。そのため再生開始の送信は、失敗したら間隔を空けて送り直し、すぐに別の動画へ移っても取り消さない
+- **送信先はログインアカウントに紐づく URL に限る**: VISIONOS / IOS など認証なしのクライアントが返す URL は、Cookie を付けて送っても履歴に残らない。ログイン中は認証付き WEB の `/player` から取得する（`YouTubeClient.resolvePlaybackTracking`）。アカウントに紐づく URL には `uga` パラメータが付く
+- **再生開始から切り離す**: 認証付き WEB の `/player` の応答は 200KB を超えるため、`X-Goog-FieldMask: playabilityStatus.status,playbackTracking` で約 3KB に絞り、再生を待たせずに非同期で取得する。以前は VISIONOS の応答から 2 秒で打ち切って認証なしの URL に切り替えていたため、弱い電波では履歴に残らなかった
+- **オフライン再生も記録**: 保存済み動画を再生したときも、通信できればアカウント用の URL を取得して送る
+- **確認するときの注意**: `FEhistory` の「今日」の区切りは先頭がショートの棚（数百本になることがある）で、通常の動画はその後ろに並ぶ。先頭だけを見ると記録されていないように見える
 
 ### 音声のみモード（StreamResourceLoader）
 

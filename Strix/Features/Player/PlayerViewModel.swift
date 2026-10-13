@@ -183,7 +183,10 @@ final class PlayerViewModel {
                 thumbnailURL: info.thumbnailURL,
                 player: avPlayer
             )
-            playbackTracker.start(player: avPlayer, trackingURLs: info.playbackTrackingURLs)
+            let fromPlayer = info.playbackTrackingURLs
+            playbackTracker.start(player: avPlayer) { [youtubeClient] in
+                await youtubeClient.resolvePlaybackTracking(videoID, fromPlayer)
+            }
             saveToHistory(videoID: videoID, info: info, modelContext: modelContext)
         } catch {
             streamError = error

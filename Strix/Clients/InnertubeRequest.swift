@@ -40,13 +40,17 @@ enum InnertubeRequest {
     }()
 
     /// WEB クライアント用の POST リクエストを構築する
-    static func webRequest(url: URL, body: [String: Any], authenticated: Bool = true) throws -> URLRequest {
+    static func webRequest(url: URL, body: [String: Any], authenticated: Bool = true,
+                           headers: [String: String] = [:]) throws -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(YouTubeConstants.origin, forHTTPHeaderField: "Origin")
         request.setValue(YouTubeConstants.referer, forHTTPHeaderField: "Referer")
         request.setValue(YouTubeConstants.webUserAgent, forHTTPHeaderField: "User-Agent")
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
 
         if authenticated {
             ContentClient.applyAuth(to: &request)
@@ -62,8 +66,9 @@ enum InnertubeRequest {
     }
 
     /// WEB クライアント用リクエストを送信し、JSON を返す
-    static func fetchWeb(url: URL, body: [String: Any], authenticated: Bool = true) async throws -> [String: Any] {
-        let request = try webRequest(url: url, body: body, authenticated: authenticated)
+    static func fetchWeb(url: URL, body: [String: Any], authenticated: Bool = true,
+                         headers: [String: String] = [:]) async throws -> [String: Any] {
+        let request = try webRequest(url: url, body: body, authenticated: authenticated, headers: headers)
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
