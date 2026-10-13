@@ -87,6 +87,15 @@ Innertube WEB client でライブラリ・プレイリスト一覧を取得。
 | ミックスリスト | `/next` の playlistPanelVideoRenderer | 専用パーサー |
 | 画像 URL | プロトコル相対 URL 補正 | `imageURL(from:)` で `//` → `https:` |
 
+### 一覧から除外する動画
+
+未加入では再生できないメンバー限定動画は、`containsMembersOnlyBadge` で一覧から外す。ログイン中のホーム・関連動画には、次の 2 つの形で現れる。
+
+- **メンバー限定バッジ付き**: `badgeStyle == "BADGE_MEMBERS_ONLY"`（旧形式は `style == "BADGE_STYLE_TYPE_MEMBERS_ONLY"`）。
+- **メンバーシップの勧誘枠**: 「YouTube より」(`BADGE_PROMOTED`) と「￥0 で試す」(`BADGE_COMMERCE`) が付き、メンバー限定バッジは付かない。それでも `/player` は UNPLAYABLE（メンバー限定）を返す。そのため `BADGE_PROMOTED` で外す。勧誘枠は取得のたびに入れ替わるので、1 回の取得で出なくても再現しないとは言えない。
+
+`BADGE_COMMERCE` 単独では外さない。映画の「無料、広告あり」にも付き、こちらは再生できるため。
+
 ## チャンネルアバター取得
 
 取得元の優先順:
