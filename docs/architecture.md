@@ -59,7 +59,7 @@ Innertube `/browse/edit_playlist` エンドポイントで以下の操作を実�
 `PlayerCoordinator`（`@Observable`）がアプリ全体のプレイヤー状態（`.hidden` / `.fullScreen` / `.miniPlayer`）を管理。`RootTabView` で `.environment()` 注入し、どのタブからでも `coordinator.play(videoID:)` で再生開始。
 
 - `PlayerContainerView`: RootTabView のオーバーレイ。フルスクリーンとミニプレイヤーの切替を管理
-- ミニプレイヤー: `AVPlayerLayer` ベースの小窓（160×90pt）で映像をリアルタイム表示
+- ミニプレイヤー: `AVPlayerLayer` ベースの小窓（200×112pt）で映像をリアルタイム表示。最初のフレームが描かれるまで `AVPlayerLayer` は透明なので、下地を黒にしている
 - 映像エリアの下スワイプでミニプレイヤーに遷移、タップでフルスクリーン復帰
 
 ### アカウント情報（AccountClient）
