@@ -20,7 +20,8 @@ struct PlayerView: View {
     @AppStorage("disableRecommendations") private var disableRecommendations = false
     @State private var showBotVerify = false
     @State private var showFullDescription = false
-    @State private var showComments = false
+    /// 動画の下の領域に開いているパネル（開いている間も動画は操作できる）
+    @State private var panel: PlayerPanel?
     @State private var showQueue = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -40,67 +41,93 @@ struct PlayerView: View {
 
             // 下部コンテンツ（動画の後ろをスクロール）。フルスクリーン中は非表示
             if !isFullScreen {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        // 再生キューインジケータ（N/M 表示。タップでキュー一覧を開く）
-                        if !vm.playlistQueue.isEmpty, !vm.isLoadingStream, vm.streamError == nil {
-                            Button {
-                                showQueue = true
-                            } label: {
-                                HStack {
-                                    Image(systemName: "list.and.film")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text("再生キュー  \(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
+                ZStack(alignment: .bottom) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            // 再生キューインジケータ（N/M 表示。タップでキュー一覧を開く）
+                            if !vm.playlistQueue.isEmpty, !vm.isLoadingStream, vm.streamError == nil {
+                                Button {
+                                    showQueue = true
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "list.and.film")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("再生キュー  \(vm.playlistIndex + 1)/\(vm.playlistQueue.count)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
-                        }
 
-                        if vm.isLoadingStream {
-                            // ローディング中はタイトルスケルトン
-                            skeletonTitle
-                        } else if let info = vm.videoInfo {
-                            // タイトル・チャンネル情報
-                            videoMeta(info: info)
-                        }
+                            if vm.isLoadingStream {
+                                // ローディング中はタイトルスケルトン
+                                skeletonTitle
+                            } else if let info = vm.videoInfo {
+                                // タイトル・チャンネル情報
+                                videoMeta(info: info)
+                            }
 
-                        if !vm.chapters.isEmpty {
-                            chaptersSection
-                        }
+                            Divider()
+                                .padding(.top, 8)
 
-                        Divider()
-                            .padding(.top, 8)
+                            // コメント
+                            commentsSection
 
-                        // コメント
-                        commentsSection
+                            Divider()
+                                .padding(.top, 8)
 
-                        Divider()
-                            .padding(.top, 8)
-
-                        // 関連動画
-                        if disableRecommendations {
-                            ContentUnavailableView(
-                                "関連動画はオフです",
-                                systemImage: "eye.slash",
-                                description: Text("おすすめ動画の表示は設定で無効にされています")
-                            )
-                            .padding(.top, 12)
-                        } else {
-                            relatedSection
+                            // 関連動画
+                            if disableRecommendations {
+                                ContentUnavailableView(
+                                    "関連動画はオフです",
+                                    systemImage: "eye.slash",
+                                    description: Text("おすすめ動画の表示は設定で無効にされています")
+                                )
+                                .padding(.top, 12)
+                            } else {
+                                relatedSection
+                            }
                         }
                     }
+
+                    if let panel {
+                        PlayerPanelContainer(
+                            title: panel.title,
+                            subtitle: panel == .comments ? vm.commentCountText : nil,
+                            edge: .bottom,
+                            onClose: closePanel
+                        ) {
+                            panelContent(panel)
+                        }
+                        .transition(.move(edge: .bottom))
+                        .zIndex(1)
+                    }
                 }
+                .clipped()
             } // if !isFullScreen
+        }
+        // フルスクリーン中のチャプター一覧は、公式クライアントと同じく動画の右側に重ねる
+        .overlay(alignment: .trailing) {
+            if isFullScreen, panel == .chapters {
+                PlayerPanelContainer(title: PlayerPanel.chapters.title, edge: .trailing, onClose: closePanel) {
+                    panelContent(.chapters)
+                }
+                .frame(width: 360)
+                .colorScheme(.dark)
+                .transition(.move(edge: .trailing))
+            }
+        }
+        .onChange(of: vm.loadedVideoID) { _, _ in
+            closePanel()
         }
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: scenePhase) { _, newPhase in
@@ -176,7 +203,8 @@ struct PlayerView: View {
                     videoID: videoID,
                     vm: vm,
                     onToggleFullScreen: { toggleFullScreen() },
-                    isFullScreen: isFullScreen
+                    isFullScreen: isFullScreen,
+                    onShowChapters: { openPanel(.chapters) }
                 )
                 .aspectRatio(16 / 9, contentMode: .fit)
             }
@@ -271,30 +299,111 @@ struct PlayerView: View {
             }
             .buttonStyle(.plain)
 
+            // 公式クライアントと同じく、チャプター一覧は説明欄を開いたときだけ出す
+            if showFullDescription, !vm.chapters.isEmpty {
+                chaptersSection
+            }
+
             // チャンネル行（アバター + チャンネル名）
             if let channelName = info.channelName {
                 channelRow(name: channelName, channelId: info.channelId)
             }
 
-            if let like = vm.likeState {
-                likeButton(like)
+            actionRow
+        }
+    }
+
+    // MARK: - 操作ボタン列（公式クライアントと同じく、評価・共有・保存・ダウンロードを横に並べる）
+
+    private var actionRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if let like = vm.likeState {
+                    ratingPill(like)
+                }
+                if let url = URL(string: "https://youtu.be/\(videoID)") {
+                    ShareLink(item: url) {
+                        actionChip("共有", systemImage: "arrowshape.turn.up.right")
+                    }
+                    .buttonStyle(.plain)
+                }
+                AddToPlaylistMenu(videoId: videoID) {
+                    actionChip("保存", systemImage: "bookmark")
+                }
+                .buttonStyle(.plain)
+                downloadChip
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// 高評価（件数付き）と低評価を縦線で区切った 1 つのボタン
+    private func ratingPill(_ like: LikeState) -> some View {
+        HStack(spacing: 0) {
+            Button {
+                Task { await vm.toggleRating(.like) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: like.rating == .like ? "hand.thumbsup.fill" : "hand.thumbsup")
+                    if let count = like.displayCountText {
+                        Text(count)
+                    }
+                }
+                .padding(.leading, 14)
+                .padding(.trailing, 12)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+            }
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.2))
+                .frame(width: 1, height: 20)
+
+            Button {
+                Task { await vm.toggleRating(.dislike) }
+            } label: {
+                Image(systemName: like.rating == .dislike ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                    .padding(.leading, 12)
+                    .padding(.trailing, 14)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+        }
+        .buttonStyle(.plain)
+        .font(.subheadline.weight(.medium))
+        .frame(height: 36)
+        .background(Color(.tertiarySystemFill), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var downloadChip: some View {
+        if let video = vm.currentVideoItem {
+            let record = DownloadManager.record(for: video.videoId, in: modelContext)
+            if let record, DownloadManager.isPlayableOffline(record) {
+                actionChip("ダウンロード済み", systemImage: "checkmark.circle")
+            } else if DownloadManager.shared.isDownloading(video.videoId) || record?.state == .downloading {
+                actionChip("ダウンロード中", systemImage: "arrow.down.circle.dotted")
+            } else {
+                Button {
+                    DownloadManager.shared.startDownload(video: video, modelContext: modelContext)
+                } label: {
+                    actionChip("ダウンロード", systemImage: "arrow.down.to.line")
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 
-    private func likeButton(_ like: LikeState) -> some View {
-        Button {
-            Task { await vm.toggleLike() }
-        } label: {
-            Label(like.displayCountText ?? "高評価", systemImage: like.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color(.secondarySystemBackground), in: Capsule())
+    private func actionChip(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+            Text(title)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 4)
+        .font(.subheadline.weight(.medium))
+        .padding(.horizontal, 14)
+        .frame(height: 36)
+        .background(Color(.tertiarySystemFill), in: Capsule())
     }
 
     // MARK: - チャプター
@@ -323,24 +432,17 @@ struct PlayerView: View {
 
     private func chapterCard(_ chapter: VideoChapter) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            LazyImage(url: chapter.thumbnailURL) { state in
-                if let image = state.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    Color(.secondarySystemBackground)
+            ChapterThumbnail(url: chapter.thumbnailURL)
+                .frame(width: 128, height: 72)
+                .overlay(alignment: .bottomTrailing) {
+                    Text(PlaybackTimeFormatter.string(from: chapter.startSeconds))
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
+                        .padding(4)
                 }
-            }
-            .frame(width: 128, height: 72)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(alignment: .bottomTrailing) {
-                Text(PlaybackTimeFormatter.string(from: chapter.startSeconds))
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
-                    .padding(4)
-            }
             Text(chapter.title)
                 .font(.caption)
                 .lineLimit(2)
@@ -441,7 +543,7 @@ struct PlayerView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             } else if !vm.comments.isEmpty {
-                Button { showComments = true } label: {
+                Button { openPanel(.comments) } label: {
                     VStack(spacing: 0) {
                         // ヘッダー行
                         HStack {
@@ -449,9 +551,11 @@ struct PlayerView: View {
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.primary)
-                            Text("\(vm.comments.count)件")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if let count = vm.commentCountText {
+                                Text(count)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             Spacer()
                             Image(systemName: "chevron.down")
                                 .font(.caption)
@@ -499,63 +603,69 @@ struct PlayerView: View {
                 .buttonStyle(.plain)
             }
         }
-        .sheet(isPresented: $showComments) {
-            commentsSheet
-        }
     }
 
     /// コメント全件表示シート
-    private var commentsSheet: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(vm.comments) { comment in
-                        commentRow(comment)
+    // MARK: - パネル（チャプター・コメント）
 
-                        // 返信展開ボタン
-                        if comment.replyCount > 0 && comment.repliesContinuation != nil {
-                            repliesToggle(for: comment)
-                        }
+    private func openPanel(_ panel: PlayerPanel) {
+        withAnimation(.snappy(duration: 0.3)) { self.panel = panel }
+    }
 
-                        // 返信スレッド
-                        if vm.expandedReplies.contains(comment.id) {
-                            repliesSection(for: comment)
-                        }
+    private func closePanel() {
+        withAnimation(.snappy(duration: 0.3)) { panel = nil }
+    }
 
-                        Divider()
-                            .padding(.leading, 56)
-                    }
-
-                    // ページネーション
-                    if vm.commentsContinuation != nil {
-                        if vm.isLoadingMoreComments {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                        } else {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .onAppear {
-                                    Task { await vm.loadMoreComments() }
-                                }
-                        }
-                    }
-                }
+    @ViewBuilder
+    private func panelContent(_ panel: PlayerPanel) -> some View {
+        switch panel {
+        case .chapters:
+            ChaptersList(chapters: vm.chapters, player: vm.player) { chapter in
+                vm.seek(to: chapter.startSeconds)
             }
-            .navigationTitle("コメント")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showComments = false } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+        case .comments:
+            commentsList
+        }
+    }
+
+    private var commentsList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(vm.comments) { comment in
+                    commentRow(comment)
+
+                    // 返信展開ボタン
+                    if comment.replyCount > 0 && comment.repliesContinuation != nil {
+                        repliesToggle(for: comment)
+                    }
+
+                    // 返信スレッド
+                    if vm.expandedReplies.contains(comment.id) {
+                        repliesSection(for: comment)
+                    }
+
+                    Divider()
+                        .padding(.leading, 56)
+                }
+
+                // ページネーション
+                if vm.commentsContinuation != nil {
+                    if vm.isLoadingMoreComments {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .onAppear {
+                                Task { await vm.loadMoreComments() }
+                            }
                     }
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .panelPullToDismiss()
     }
 
     /// 返信展開/折りたたみボタン
@@ -795,4 +905,16 @@ private struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+/// 動画の下の領域に開くパネルの種類
+enum PlayerPanel {
+    case chapters, comments
+
+    var title: String {
+        switch self {
+        case .chapters: "チャプター"
+        case .comments: "コメント"
+        }
+    }
 }

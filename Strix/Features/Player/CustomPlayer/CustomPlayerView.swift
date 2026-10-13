@@ -29,6 +29,8 @@ struct CustomPlayerView: View {
     var onToggleFullScreen: (() -> Void)? = nil
     /// フルスクリーン中かどうか（ボタンアイコン切替用）
     var isFullScreen: Bool = false
+    /// チャプター名をタップしたときにチャプター一覧を開く
+    var onShowChapters: (() -> Void)? = nil
 
     @Environment(PlayerCoordinator.self) private var coordinator
     @Environment(\.modelContext) private var modelContext
@@ -448,11 +450,22 @@ struct CustomPlayerView: View {
             VStack(alignment: .leading, spacing: 2) {
                 // スクラブ中はプレビュー側にチャプター名を出す
                 if !controller.isScrubbing, let chapter = VideoChapter.current(in: vm.chapters, at: displayedTime) {
-                    Text(chapter.title)
+                    Button {
+                        onShowChapters?()
+                        controller.bumpFade()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(chapter.title)
+                                .lineLimit(1)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                        }
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .allowsHitTesting(false)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
                 HStack(spacing: 10) {
                     Text(PlaybackTimeFormatter.string(from: displayedTime))

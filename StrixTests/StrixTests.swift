@@ -891,6 +891,7 @@ struct ContentClientTests {
         let result = try await ContentClient.live.fetchRelated("-Vv7eGoBHzE")
         #expect(result.chapters.count >= 2)
         #expect(result.chapters.first?.startSeconds == 0)
+        #expect(result.commentCountText != nil)
     }
 
     @Test func fetchRelatedReturnsVideos() async throws {
@@ -3412,11 +3413,15 @@ struct WatchNextParsingTests {
 
     @Test func extractLikeStateReadsStatusAndCounts() throws {
         let liked = try #require(ContentClient.extractLikeState(from: likeJSON(status: "LIKE")))
-        #expect(liked.isLiked)
+        #expect(liked.rating == .like)
         #expect(liked.displayCountText == "5369")
 
         let notLiked = try #require(ContentClient.extractLikeState(from: likeJSON(status: "INDIFFERENT")))
-        #expect(!notLiked.isLiked)
+        #expect(notLiked.rating == .none)
+
+        let disliked = try #require(ContentClient.extractLikeState(from: likeJSON(status: "DISLIKE")))
+        #expect(disliked.rating == .dislike)
+        #expect(disliked.displayCountText == "5368")
         #expect(notLiked.displayCountText == "5368")
     }
 
@@ -3436,6 +3441,21 @@ struct WatchNextParsingTests {
         #expect(ContentClient.extractLikeState(from: json) == nil)
     }
 
+    @Test func extractCommentCountReadsCommentsPanelHeader() {
+        func panel(_ id: String, _ count: String) -> [String: Any] {
+            ["engagementPanelSectionListRenderer": [
+                "panelIdentifier": id,
+                "header": ["engagementPanelTitleHeaderRenderer": ["contextualInfo": ["runs": [["text": count]]]]]
+            ]]
+        }
+        let json: [String: Any] = ["engagementPanels": [
+            panel("engagement-panel-structured-description", "999"),
+            panel("engagement-panel-comments-section", "1,234")
+        ]]
+        #expect(ContentClient.extractCommentCount(from: json) == "1,234")
+        #expect(ContentClient.extractCommentCount(from: ["engagementPanels": []]) == nil)
+    }
+
     @Test func extractLikeStateReturnsNilWithoutButton() {
         #expect(ContentClient.extractLikeState(from: ["contents": [:]]) == nil)
     }
@@ -3446,30 +3466,37 @@ struct WatchNextParsingTests {
 @MainActor
 struct PlayerLikeTests {
 
-    private func makeVM(setLiked: @escaping (String, Bool) async throws -> Void) throws -> (PlayerViewModel, ModelContext) {
+    private func makeVM(setRating: @escaping (String, VideoRating) async throws -> Void) throws -> (PlayerViewModel, ModelContext) {
         let youtubeClient = YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound })
         let contentClient = ContentClient.mock(
-            fetchRelated: { _ in WatchNextInfo(like: LikeState(isLiked: false, countText: "10", likedCountText: "11")) },
-            setLiked: setLiked
+            fetchRelated: { _ in WatchNextInfo(like: LikeState(rating: .none, countText: "10", likedCountText: "11")) },
+            setRating: setRating
         )
         let container = try ModelContainer(for: WatchedVideo.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         return (PlayerViewModel(youtubeClient: youtubeClient, contentClient: contentClient), ModelContext(container))
     }
 
-    @Test func toggleLikeSendsAndUpdatesState() async throws {
-        var sent: [(String, Bool)] = []
-        let (vm, ctx) = try makeVM { id, liked in sent.append((id, liked)) }
+    @Test func toggleRatingSendsAndUpdatesState() async throws {
+        var sent: [VideoRating] = []
+        let (vm, ctx) = try makeVM { _, rating in sent.append(rating) }
         await vm.load(videoID: "v1", modelContext: ctx)
-        await vm.toggleLike()
-        #expect(vm.likeState?.isLiked == true)
+        await vm.toggleRating(.like)
+        #expect(vm.likeState?.rating == .like)
         #expect(vm.likeState?.displayCountText == "11")
-        #expect(sent.map(\.0) == ["v1"] && sent.map(\.1) == [true])
+        // 低評価に切り替えると高評価は外れる
+        await vm.toggleRating(.dislike)
+        #expect(vm.likeState?.rating == .dislike)
+        #expect(vm.likeState?.displayCountText == "10")
+        // 同じ評価をもう一度押すと取り消す
+        await vm.toggleRating(.dislike)
+        #expect(vm.likeState?.rating == VideoRating.none)
+        #expect(sent == [.like, .dislike, .none])
     }
 
-    @Test func toggleLikeRevertsOnFailure() async throws {
+    @Test func toggleRatingRevertsOnFailure() async throws {
         let (vm, ctx) = try makeVM { _, _ in throw URLError(.notConnectedToInternet) }
         await vm.load(videoID: "v1", modelContext: ctx)
-        await vm.toggleLike()
-        #expect(vm.likeState?.isLiked == false)
+        await vm.toggleRating(.like)
+        #expect(vm.likeState?.rating == VideoRating.none)
     }
 }

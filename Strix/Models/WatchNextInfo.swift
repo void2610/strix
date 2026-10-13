@@ -8,6 +8,8 @@ struct WatchNextInfo {
     var viewCount: String?
     var publishDate: String?
     var chapters: [VideoChapter] = []
+    /// コメントの総数の表示（「137」など）
+    var commentCountText: String?
     /// 高評価ボタンの状態（取得できなければ nil）
     var like: LikeState?
 }
@@ -25,13 +27,18 @@ struct VideoChapter: Equatable, Identifiable {
     }
 }
 
-/// 高評価ボタンの状態
+/// 動画への評価
+enum VideoRating: Equatable {
+    case none, like, dislike
+}
+
+/// 高評価・低評価ボタンの状態
 struct LikeState: Equatable {
-    var isLiked: Bool
+    var rating: VideoRating
     /// 高評価していないときに表示する件数
     let countText: String?
     /// 高評価したときに表示する件数（自分の 1 件を含む）
     let likedCountText: String?
 
-    var displayCountText: String? { isLiked ? likedCountText : countText }
+    var displayCountText: String? { rating == .like ? likedCountText : countText }
 }

@@ -43,7 +43,9 @@ final class PlayerViewModel {
     var viewCountText: String?
     var publishDateText: String?
     var chapters: [VideoChapter] = []
-    /// 高評価ボタンの状態（未ログインで評価できないときは nil）
+    /// コメントの総数の表示
+    var commentCountText: String?
+    /// 高評価・低評価ボタンの状態（未ログインで評価できないときは nil）
     var likeState: LikeState?
     private var isSendingLike = false
     /// コメント一覧
@@ -114,6 +116,7 @@ final class PlayerViewModel {
         viewCountText = nil
         publishDateText = nil
         chapters = []
+        commentCountText = nil
         likeState = nil
         comments = []
         isLoadingComments = true
@@ -212,6 +215,7 @@ final class PlayerViewModel {
             viewCountText = result.viewCount
             publishDateText = result.publishDate
             chapters = result.chapters
+            commentCountText = result.commentCountText
             likeState = result.like
         } catch {
             strixLog("関連動画取得エラー: \(error.localizedDescription)")
@@ -219,14 +223,15 @@ final class PlayerViewModel {
         isLoadingRelated = false
     }
 
-    /// 高評価を切り替える。先に表示を変え、送信に失敗したら戻す。
-    func toggleLike() async {
+    /// 評価を切り替える。同じ評価をもう一度押すと取り消す。先に表示を変え、送信に失敗したら戻す。
+    func toggleRating(_ rating: VideoRating) async {
         guard let videoID = loadedVideoID, let current = likeState, !isSendingLike else { return }
         isSendingLike = true
         defer { isSendingLike = false }
-        likeState?.isLiked = !current.isLiked
+        let next: VideoRating = current.rating == rating ? .none : rating
+        likeState?.rating = next
         do {
-            try await contentClient.setLiked(videoID, !current.isLiked)
+            try await contentClient.setRating(videoID, next)
         } catch {
             strixLog("高評価の送信エラー: \(error.localizedDescription)")
             if loadedVideoID == videoID { likeState = current }

@@ -19,6 +19,7 @@ enum YouTubeConstants {
     static let feedbackURL = URL(string: "https://www.youtube.com/youtubei/v1/feedback?prettyPrint=false")!
     static let editPlaylistURL = URL(string: "https://www.youtube.com/youtubei/v1/browse/edit_playlist?prettyPrint=false")!
     static let likeURL = URL(string: "https://www.youtube.com/youtubei/v1/like/like?prettyPrint=false")!
+    static let dislikeURL = URL(string: "https://www.youtube.com/youtubei/v1/like/dislike?prettyPrint=false")!
     static let removeLikeURL = URL(string: "https://www.youtube.com/youtubei/v1/like/removelike?prettyPrint=false")!
     static let subscribeURL = URL(string: "https://www.youtube.com/youtubei/v1/subscription/subscribe?prettyPrint=false")!
     static let unsubscribeURL = URL(string: "https://www.youtube.com/youtubei/v1/subscription/unsubscribe?prettyPrint=false")!

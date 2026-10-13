@@ -37,8 +37,9 @@ final class PlaylistMenuState {
 }
 
 /// コンテキストメニュー内で「プレイリストに追加」サブメニューを表示するビュー。
-struct AddToPlaylistMenu: View {
+struct AddToPlaylistMenu<MenuLabel: View>: View {
     let videoId: String
+    @ViewBuilder var label: () -> MenuLabel
 
     @State private var menuState = PlaylistMenuState.shared
 
@@ -61,10 +62,16 @@ struct AddToPlaylistMenu: View {
                 }
             }
         } label: {
-            Label("プレイリストに追加", systemImage: "text.badge.plus")
+            label()
         }
         .task {
             await menuState.refreshIfNeeded()
         }
+    }
+}
+
+extension AddToPlaylistMenu where MenuLabel == Label<Text, Image> {
+    init(videoId: String) {
+        self.init(videoId: videoId) { Label("プレイリストに追加", systemImage: "text.badge.plus") }
     }
 }

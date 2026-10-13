@@ -54,8 +54,8 @@ struct ContentClient {
     var searchSuggestions: (String) async throws -> [String]
     /// 関連動画・動画オーナーアバター・説明欄・チャプター・高評価の状態を返す
     var fetchRelated: (String) async throws -> WatchNextInfo
-    /// 動画を高評価する（false で取り消す）
-    var setLiked: (_ videoId: String, _ liked: Bool) async throws -> Void
+    /// 動画を高評価・低評価する（.none で取り消す）
+    var setRating: (_ videoId: String, _ rating: VideoRating) async throws -> Void
     var fetchChannel: (String) async throws -> ChannelInfo
     /// チャンネルを登録する
     var subscribe: (_ channelId: String) async throws -> Void
@@ -86,7 +86,7 @@ extension ContentClient {
         searchPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         searchSuggestions: @escaping (String) async throws -> [String] = { _ in [] },
         fetchRelated: @escaping (String) async throws -> WatchNextInfo = { _ in WatchNextInfo() },
-        setLiked: @escaping (String, Bool) async throws -> Void = { _, _ in },
+        setRating: @escaping (String, VideoRating) async throws -> Void = { _, _ in },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
         subscribe: @escaping (String) async throws -> Void = { _ in },
         unsubscribe: @escaping (String) async throws -> Void = { _ in },
@@ -96,7 +96,7 @@ extension ContentClient {
         fetchComments: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) },
         fetchCommentsPage: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, searchPage: searchPage, searchSuggestions: searchSuggestions, fetchRelated: fetchRelated, setLiked: setLiked, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, searchPage: searchPage, searchSuggestions: searchSuggestions, fetchRelated: fetchRelated, setRating: setRating, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
     }
 }
 
@@ -171,11 +171,16 @@ extension ContentClient {
                     viewCount: viewCount,
                     publishDate: publishDate,
                     chapters: extractChapters(from: json),
+                    commentCountText: extractCommentCount(from: json),
                     like: extractLikeState(from: json)
                 )
             },
-            setLiked: { videoId, liked in
-                let url = liked ? YouTubeConstants.likeURL : YouTubeConstants.removeLikeURL
+            setRating: { videoId, rating in
+                let url = switch rating {
+                case .like: YouTubeConstants.likeURL
+                case .dislike: YouTubeConstants.dislikeURL
+                case .none: YouTubeConstants.removeLikeURL
+                }
                 try await InnertubeRequest.performWeb(url: url, body: ["target": ["videoId": videoId]])
             },
             fetchChannel: { channelId in

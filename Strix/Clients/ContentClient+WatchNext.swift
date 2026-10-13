@@ -37,10 +37,21 @@ extension ContentClient {
             ((toggle?[key] as? [String: Any])?["buttonViewModel"] as? [String: Any])?["title"] as? String
         }
         return LikeState(
-            isLiked: status == "LIKE",
+            rating: status == "LIKE" ? .like : status == "DISLIKE" ? .dislike : .none,
             countText: title("defaultButtonViewModel"),
             likedCountText: title("toggledButtonViewModel")
         )
+    }
+
+    /// /next レスポンスのコメントパネルの見出しからコメントの総数を取り出す。
+    static func extractCommentCount(from json: Any) -> String? {
+        let panels = (json as? [String: Any])?["engagementPanels"] as? [[String: Any]] ?? []
+        let comments = panels
+            .compactMap { $0["engagementPanelSectionListRenderer"] as? [String: Any] }
+            .first { $0["panelIdentifier"] as? String == "engagement-panel-comments-section" }
+        let header = (comments?["header"] as? [String: Any])?["engagementPanelTitleHeaderRenderer"] as? [String: Any]
+        let runs = (header?["contextualInfo"] as? [String: Any])?["runs"] as? [[String: Any]]
+        return runs.map(\.joinedText).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// JSON ツリーを深さ優先で探し、最初に見つかったキーの値を返す。
