@@ -22,10 +22,11 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
   - 続きのトークンは結果末尾の `continuationItemRenderer` から取る。絞り込みチップも `continuationCommand` を持つため、汎用の `extractContinuationToken` では別の絞り込みのページを拾うことがある
   - 続きのページはショートだけで通常の動画が 0 件のことがあるので、1 回の追加読み込みで数ページまで先を試す
   - 再生リスト・コースの lockup は動画として再生できないので検索結果から除く
-- **関連動画**: `/next` API から lockupViewModel をパース。同じ応答から説明欄・チャプター・高評価の状態も取り出し、`WatchNextInfo` にまとめて返す
+- **関連動画**: `/next` API から lockupViewModel をパース。同じ応答から説明欄・チャプター・評価の状態・コメント数も取り出し、`WatchNextInfo` にまとめて返す
   - **チャプター**: シークバーのマーカー（`markersMap`）の `DESCRIPTION_CHAPTERS` を、無ければ `AUTO_CHAPTERS` を使う
   - **高評価**: `segmentedLikeDislikeButtonViewModel` の `likeStatusEntity.likeStatus` が状態。件数は未評価時（`defaultButtonViewModel`）と評価時（`toggledButtonViewModel`）の表示が両方入っている。未ログインの応答はボタンに `signInEndpoint` が付くので、そのときはボタンを出さない（`AuthState` を見ないのは、テストで共有のログイン状態を書き換えずに済ませるため）
-  - 評価の送信は `/like/like`・`/like/removelike` に `target.videoId` だけを送る
+  - 評価の送信は `/like/like`・`/like/dislike`・`/like/removelike` に `target.videoId` だけを送る
+  - **コメント数**: `engagementPanels` のうち `panelIdentifier == "engagement-panel-comments-section"` の見出しの `contextualInfo`
 - **チャンネル**: `/browse` でチャンネルページ取得
 
 認証ヘッダー: `Cookie` + `SAPISIDHASH`（`Authorization`）+ `X-Goog-AuthUser: 0`
@@ -39,6 +40,14 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
 4. **WebPage**（WKWebView + fetch/XHR インターセプト） — モバイル版 YouTube を読み込み、再生を開始させた後、`googlevideo.com/videoplayback` への fetch/XHR リクエストをフックして署名デコード済み URL を取得。combined format（itag 18/22）を優先
 
 ANDROID_VR（1.65.10）は 2026-08-17 以降、itag18 を含む全フォーマットが 403 になったため再生経路から外した。それ以前から PO Token 未提示のストリームは「先頭約 1 分（2.5MB 前後）だけ取得でき、それより先の Range は 403」になっており、`/player` が URL を返しても再生が途中で止まる。ストリームの可否は URL の有無ではなく末尾まで取得できるかで判定する（`YouTubeClientTests` の結合テスト）。
+
+### コメント・チャプターのパネル（PlayerPanelContainer）
+
+公式クライアントと同じく、動画の下の領域に重ねて開く。`.sheet` を使わないのは、開いている間に背面（動画）を操作できなくなるため。全画面時のチャプター一覧は動画の右側に重ねる。
+
+- 下からの出入りは `.transition(.move(edge:))`。下の領域を `.clipped()` して、パネルが動画の上にはみ出さないようにする
+- つまみ・見出しを引いて閉じるほか、一覧に `panelPullToDismiss()` を付けると、一覧の先頭からさらに下へ引いても閉じる。スクロールのはみ出し量（`onScrollGeometryChange`）だけパネルを下げ、一覧の中身は同じ量を打ち消してパネルと一緒に動かす。指を離したとき（`onScrollPhaseChange`）に一定以上はみ出していれば閉じる
+- 閉じると決めた後は、一覧の跳ね返りでパネルが引き戻されないよう、パネルの位置だけ止める
 
 ### シークサムネイル（Storyboard）
 
