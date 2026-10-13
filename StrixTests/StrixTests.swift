@@ -244,26 +244,44 @@ struct ContentClientParsingTests {
 
     // MARK: メンバー限定動画の除外
 
-    @Test func parseVideoRendererExcludesMembersOnlyLockup() {
-        var json = makeLockupViewModelJSON(contentId: "members123")
+    private func makeLockupWithBadges(contentId: String, badges: [[String: Any]]) -> [String: Any] {
+        var json = makeLockupViewModelJSON(contentId: contentId)
         var metadata = json["metadata"] as! [String: Any]
         var lmvm = metadata["lockupMetadataViewModel"] as! [String: Any]
         lmvm["metadata"] = [
             "contentMetadataViewModel": [
                 "metadataRows": [
-                    ["badges": [
-                        ["badgeViewModel": [
-                            "badgeText": "メンバー限定",
-                            "badgeStyle": "BADGE_MEMBERS_ONLY",
-                            "iconName": "SPONSORSHIP_STAR"
-                        ]]
-                    ]]
+                    ["badges": badges.map { ["badgeViewModel": $0] }]
                 ]
             ]
         ]
         metadata["lockupMetadataViewModel"] = lmvm
         json["metadata"] = metadata
+        return json
+    }
+
+    @Test func parseVideoRendererExcludesMembersOnlyLockup() {
+        let json = makeLockupWithBadges(contentId: "members123", badges: [
+            ["badgeText": "メンバー限定", "badgeStyle": "BADGE_MEMBERS_ONLY", "iconName": "SPONSORSHIP_STAR"]
+        ])
         #expect(ContentClient.parseVideoRenderer(json) == nil)
+    }
+
+    @Test func parseVideoRendererExcludesMembershipTrialPromotion() {
+        // 関連動画に出る勧誘枠はメンバー限定バッジを持たない
+        let json = makeLockupWithBadges(contentId: "promo123", badges: [
+            ["badgeText": "YouTube より", "badgeStyle": "BADGE_PROMOTED"],
+            ["badgeText": "￥0 で試す", "badgeStyle": "BADGE_COMMERCE", "iconName": "PRICE_TAG"]
+        ])
+        #expect(ContentClient.parseVideoRenderer(json) == nil)
+    }
+
+    @Test func parseVideoRendererKeepsFreeWithAdsCommerceVideo() {
+        // 「無料、広告あり」の映画は BADGE_COMMERCE でも再生できる
+        let json = makeLockupWithBadges(contentId: "movie123", badges: [
+            ["badgeText": "無料、広告あり", "badgeStyle": "BADGE_COMMERCE"]
+        ])
+        #expect(ContentClient.parseVideoRenderer(json)?.videoId == "movie123")
     }
 
     @Test func parseVideoRendererExcludesMembersOnlyVideoRenderer() {

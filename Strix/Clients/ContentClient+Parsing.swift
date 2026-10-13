@@ -260,9 +260,12 @@ extension ContentClient {
     /// メンバー限定動画を示すバッジを再帰的に検出する。
     /// WEB 新形式: badgeViewModel.badgeStyle == "BADGE_MEMBERS_ONLY"
     /// WEB 旧形式: metadataBadgeRenderer.style == "BADGE_STYLE_TYPE_MEMBERS_ONLY"
+    /// メンバーシップの無料体験を勧める枠: badgeViewModel.badgeStyle == "BADGE_PROMOTED"（「YouTube より」）
     static func containsMembersOnlyBadge(_ json: Any) -> Bool {
         if let dict = json as? [String: Any] {
             if dict["badgeStyle"] as? String == "BADGE_MEMBERS_ONLY" { return true }
+            // 勧誘枠は BADGE_MEMBERS_ONLY が付かないまま未加入では再生できない動画を出す
+            if dict["badgeStyle"] as? String == "BADGE_PROMOTED" { return true }
             if dict["style"] as? String == "BADGE_STYLE_TYPE_MEMBERS_ONLY" { return true }
             for v in dict.values where containsMembersOnlyBadge(v) { return true }
         } else if let array = json as? [Any] {
