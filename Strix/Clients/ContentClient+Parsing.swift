@@ -497,6 +497,34 @@ extension ContentClient {
         return nil
     }
 
+    /// /search のレスポンスから動画と次ページのトークンを取り出す。
+    static func parseSearchResults(from json: Any) -> ([VideoItem], String?) {
+        let videos = findVideoRenderers(in: json)
+            // 検索に混ざる再生リスト・コースの lockup は動画として再生できないため除く
+            .filter { ($0["contentType"] as? String).map { $0 == "LOCKUP_CONTENT_TYPE_VIDEO" } ?? true }
+            .compactMap { parseVideoRenderer($0) }
+        return (videos, extractSearchContinuationToken(in: json))
+    }
+
+    /// 検索結果の末尾にある continuationItemRenderer からトークンを取り出す。
+    /// 絞り込みチップも continuationCommand を持つため、汎用の extractContinuationToken は使えない。
+    static func extractSearchContinuationToken(in json: Any) -> String? {
+        if let dict = json as? [String: Any] {
+            if let item = dict["continuationItemRenderer"] as? [String: Any] {
+                let endpoint = item["continuationEndpoint"] as? [String: Any]
+                return (endpoint?["continuationCommand"] as? [String: Any])?["token"] as? String
+            }
+            for value in dict.values {
+                if let token = extractSearchContinuationToken(in: value) { return token }
+            }
+        } else if let array = json as? [Any] {
+            for item in array {
+                if let token = extractSearchContinuationToken(in: item) { return token }
+            }
+        }
+        return nil
+    }
+
     /// YouTube のプロトコル相対 URL（`//` 始まり）を `https:` 付きに補正して URL を生成する。
     static func imageURL(from string: String?) -> URL? {
         guard var s = string, !s.isEmpty else { return nil }

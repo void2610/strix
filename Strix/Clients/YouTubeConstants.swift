@@ -13,6 +13,7 @@ enum YouTubeConstants {
     // MARK: - API エンドポイント
 
     static let browseURL = URL(string: "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false")!
+    static let searchURL = URL(string: "https://www.youtube.com/youtubei/v1/search?prettyPrint=false")!
     static let nextURL = URL(string: "https://www.youtube.com/youtubei/v1/next?prettyPrint=false")!
     static let playerURL = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
     static let feedbackURL = URL(string: "https://www.youtube.com/youtubei/v1/feedback?prettyPrint=false")!

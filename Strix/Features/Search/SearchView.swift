@@ -13,8 +13,13 @@ final class SearchViewModel {
     var results: [VideoItem] = []
     var suggestions: [String] = []
     var isLoading = false
+    var isLoadingMore = false
     var error: String?
     var lastQuery = ""
+    var continuationToken: String?
+
+    /// ショートだけのページが続くことがあるため、1 回の追加読み込みで試すページ数の上限
+    static let maxEmptyPagesPerLoad = 5
 
     private let client: ContentClient
 
@@ -30,12 +35,39 @@ final class SearchViewModel {
         error = nil
         results = []
         suggestions = []
+        continuationToken = nil
         do {
-            results = try await client.search(q)
+            (results, continuationToken) = try await client.search(q)
         } catch {
             self.error = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// 検索結果の次ページを読み込む。動画が 0 件のページは上限まで飛ばして次を試す。
+    func loadMore() async {
+        guard let token = continuationToken, !isLoadingMore, !isLoading else { return }
+        let query = lastQuery
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        var currentToken: String? = token
+        for _ in 0..<Self.maxEmptyPagesPerLoad {
+            guard let t = currentToken else { break }
+            do {
+                let (videos, nextToken) = try await client.searchPage(t)
+                // 読み込み中に別の検索が始まったら結果を捨てる
+                guard query == lastQuery else { return }
+                let known = Set(results.map(\.videoId))
+                let newVideos = videos.filter { !known.contains($0.videoId) }
+                results.append(contentsOf: newVideos)
+                continuationToken = nextToken
+                if !newVideos.isEmpty { return }
+                currentToken = nextToken
+            } catch {
+                strixLog("検索結果の次ページ取得エラー: \(error.localizedDescription)")
+                return
+            }
+        }
     }
 
     /// 入力に応じてサジェストを更新する。`.task(id:)` から呼ばれ、入力変更で自動キャンセルされる。
@@ -54,6 +86,7 @@ final class SearchViewModel {
         results = []
         suggestions = []
         lastQuery = ""
+        continuationToken = nil
         error = nil
     }
 }
@@ -161,13 +194,25 @@ struct SearchView: View {
     // MARK: - 検索結果リスト
 
     private var resultsList: some View {
-        List(vm.results) { video in
-            VideoRowView(video: video)
-                .padding(.vertical, 4)
-                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                .videoRowInteraction(video: video) {
-                    playerCoordinator.play(video)
-                }
+        List {
+            ForEach(vm.results) { video in
+                VideoRowView(video: video)
+                    .padding(.vertical, 4)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    .videoRowInteraction(video: video) {
+                        playerCoordinator.play(video)
+                    }
+                    .onAppear {
+                        if video.videoId == vm.results.last?.videoId {
+                            Task { await vm.loadMore() }
+                        }
+                    }
+            }
+            if vm.isLoadingMore {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .listRowSeparator(.hidden)
+            }
         }
         .listStyle(.plain)
     }

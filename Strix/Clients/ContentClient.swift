@@ -7,7 +7,6 @@
 
 import Foundation
 import CryptoKit
-import YouTubeKit
 
 /// チャンネルタブの種類
 enum ChannelTab: String, CaseIterable {
@@ -48,7 +47,9 @@ struct ContentClient {
     /// 視聴履歴の次ページを取得
     var fetchHistoryPage: (String) async throws -> ([VideoItem], String?)
     var fetchPlaylistVideos: (String) async throws -> [VideoItem]
-    var search: (String) async throws -> [VideoItem]
+    var search: (String) async throws -> ([VideoItem], String?)
+    /// 検索結果の次ページを取得
+    var searchPage: (String) async throws -> ([VideoItem], String?)
     /// 検索オートコンプリート候補を取得する
     var searchSuggestions: (String) async throws -> [String]
     /// 関連動画・動画オーナーアバター・説明欄データを返す
@@ -79,7 +80,8 @@ extension ContentClient {
         fetchHistoryVideos: @escaping () async throws -> ([VideoItem], String?) = { ([], nil) },
         fetchHistoryPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         fetchPlaylistVideos: @escaping (String) async throws -> [VideoItem] = { _ in [] },
-        search: @escaping (String) async throws -> [VideoItem] = { _ in [] },
+        search: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
+        searchPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         searchSuggestions: @escaping (String) async throws -> [String] = { _ in [] },
         fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?) = { _ in ([], nil, nil, nil, nil) },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
@@ -91,7 +93,7 @@ extension ContentClient {
         fetchComments: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) },
         fetchCommentsPage: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, searchSuggestions: searchSuggestions, fetchRelated: fetchRelated, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, searchPage: searchPage, searchSuggestions: searchSuggestions, fetchRelated: fetchRelated, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
     }
 }
 
@@ -99,8 +101,7 @@ extension ContentClient {
 
 extension ContentClient {
     static let live: ContentClient = {
-        let model = YouTubeModel()
-        return ContentClient(
+        ContentClient(
             fetchHome: {
                 guard AuthState.shared.isSignedIn else { return ([], nil) }
                 return try await ContentClient.fetchBrowseViaInnertubeAPI(browseId: "FEwhat_to_watch", cookies: "")
@@ -147,15 +148,12 @@ extension ContentClient {
                 return try await ContentClient.fetchMixViaNextAPI(playlistId: playlistId, cookies: "")
             },
             search: { query in
-                model.cookies = AuthState.shared.cookieString ?? ""
-                let (response, error) = await SearchResponse.sendRequest(
-                    youtubeModel: model,
-                    data: [.query: query]
-                )
-                if let error { throw error }
-                return (response?.results ?? [])
-                    .compactMap { $0 as? YTVideo }
-                    .map { $0.toVideoItem }
+                let json = try await InnertubeRequest.fetchWeb(url: YouTubeConstants.searchURL, body: ["query": query])
+                return parseSearchResults(from: json)
+            },
+            searchPage: { continuation in
+                let json = try await InnertubeRequest.fetchWeb(url: YouTubeConstants.searchURL, body: ["continuation": continuation])
+                return parseSearchResults(from: json)
             },
             searchSuggestions: { query in
                 try await ContentClient.fetchSearchSuggestions(query: query)

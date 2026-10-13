@@ -242,6 +242,37 @@ struct ContentClientParsingTests {
         #expect(item?.timePostedText == "1年前")
     }
 
+    // MARK: 検索結果
+
+    @Test func parseSearchResultsUsesResultContinuationNotChips() {
+        // 絞り込みチップも continuationCommand を持つ
+        let json: [String: Any] = [
+            "header": ["searchHeaderRenderer": ["chipBar": ["chipCloudRenderer": ["chips": [
+                ["chipCloudChipRenderer": ["navigationEndpoint": ["continuationCommand": ["token": "chip"]]]]
+            ]]]]],
+            "contents": [
+                ["itemSectionRenderer": ["contents": [["lockupViewModel": makeLockupViewModelJSON(contentId: "v1")]]]],
+                ["continuationItemRenderer": ["continuationEndpoint": ["continuationCommand": ["token": "next"]]]]
+            ]
+        ]
+        let (videos, token) = ContentClient.parseSearchResults(from: json)
+        #expect(videos.map(\.videoId) == ["v1"])
+        #expect(token == "next")
+    }
+
+    @Test func parseSearchResultsExcludesNonVideoLockups() {
+        var course = makeLockupViewModelJSON(contentId: "PLcourse")
+        course["contentType"] = "LOCKUP_CONTENT_TYPE_COURSE"
+        var playlist = makeLockupViewModelJSON(contentId: "PLlist")
+        playlist["contentType"] = "LOCKUP_CONTENT_TYPE_PLAYLIST"
+        let json: [String: Any] = ["contents": [
+            ["lockupViewModel": course],
+            ["lockupViewModel": playlist],
+            ["lockupViewModel": makeLockupViewModelJSON(contentId: "v1")]
+        ]]
+        #expect(ContentClient.parseSearchResults(from: json).0.map(\.videoId) == ["v1"])
+    }
+
     // MARK: メンバー限定動画の除外
 
     private func makeLockupWithBadges(contentId: String, badges: [[String: Any]]) -> [String: Any] {
@@ -827,9 +858,23 @@ struct YouTubeConstantsTests {
 struct ContentClientTests {
 
     @Test func searchReturnsResults() async throws {
-        let results = try await ContentClient.live.search("Swift programming")
+        let (results, token) = try await ContentClient.live.search("Swift programming")
         #expect(!results.isEmpty)
         #expect(results.allSatisfy { !$0.videoId.isEmpty })
+        #expect(token != nil)
+    }
+
+    @Test func searchPageReturnsMoreResults() async throws {
+        let (first, token) = try await ContentClient.live.search("Swift programming")
+        var next = token
+        var more: [VideoItem] = []
+        // ショートだけのページを挟むことがあるため数ページ試す
+        for _ in 0..<3 where more.isEmpty {
+            guard let t = next else { break }
+            (more, next) = try await ContentClient.live.searchPage(t)
+        }
+        #expect(!more.isEmpty)
+        #expect(more.map(\.videoId) != first.map(\.videoId))
     }
 
     @Test func fetchRelatedReturnsVideos() async throws {
@@ -932,7 +977,7 @@ struct SearchViewModelTests {
         var callCount = 0
         let client = ContentClient.mock(search: { _ in
             callCount += 1
-            return []
+            return ([], nil)
         })
         let vm = SearchViewModel(client: client)
         await vm.search("Swift")
@@ -950,7 +995,7 @@ struct SearchViewModelTests {
         var receivedQuery = ""
         let client = ContentClient.mock(search: { q in
             receivedQuery = q
-            return []
+            return ([], nil)
         })
         let vm = SearchViewModel(client: client)
         await vm.search("  Swift  ")
@@ -977,7 +1022,7 @@ struct SearchViewModelTests {
         var shouldFail = true
         let client = ContentClient.mock(search: { _ in
             if shouldFail { throw URLError(.notConnectedToInternet) }
-            return []
+            return ([], nil)
         })
         let vm = SearchViewModel(client: client)
         await vm.search("first")
@@ -1002,13 +1047,75 @@ struct SearchViewModelTests {
         var callCount = 0
         let client = ContentClient.mock(search: { _ in
             callCount += 1
-            return []
+            return ([], nil)
         })
         let vm = SearchViewModel(client: client)
         await vm.search("Swift")
         vm.reset()
         await vm.search("Swift") // reset 後は同一クエリも実行される
         #expect(callCount == 2)
+    }
+
+    // MARK: 追加読み込み
+
+    private func video(_ id: String) -> VideoItem {
+        VideoItem(videoId: id, title: id, channelId: nil, channelName: nil, thumbnailURL: nil)
+    }
+
+    @Test func loadMoreAppendsNextPageWithoutDuplicates() async {
+        let client = ContentClient.mock(
+            search: { _ in ([self.video("a"), self.video("b")], "t1") },
+            searchPage: { _ in ([self.video("b"), self.video("c")], "t2") }
+        )
+        let vm = SearchViewModel(client: client)
+        await vm.search("Swift")
+        await vm.loadMore()
+        #expect(vm.results.map(\.videoId) == ["a", "b", "c"])
+        #expect(vm.continuationToken == "t2")
+    }
+
+    @Test func loadMoreSkipsPagesWithoutVideos() async {
+        // ショートだけのページは動画 0 件で返る
+        let client = ContentClient.mock(
+            search: { _ in ([self.video("a")], "t1") },
+            searchPage: { token in token == "t1" ? ([], "t2") : ([self.video("b")], "t3") }
+        )
+        let vm = SearchViewModel(client: client)
+        await vm.search("Swift")
+        await vm.loadMore()
+        #expect(vm.results.map(\.videoId) == ["a", "b"])
+        #expect(vm.continuationToken == "t3")
+    }
+
+    @Test func loadMoreGivesUpAfterEmptyPageLimit() async {
+        var pageCalls = 0
+        let client = ContentClient.mock(
+            search: { _ in ([self.video("a")], "t") },
+            searchPage: { _ in
+                pageCalls += 1
+                return ([], "t")
+            }
+        )
+        let vm = SearchViewModel(client: client)
+        await vm.search("Swift")
+        await vm.loadMore()
+        #expect(pageCalls == SearchViewModel.maxEmptyPagesPerLoad)
+        #expect(!vm.isLoadingMore)
+    }
+
+    @Test func loadMoreDoesNothingWithoutToken() async {
+        var pageCalls = 0
+        let client = ContentClient.mock(
+            search: { _ in ([self.video("a")], nil) },
+            searchPage: { _ in
+                pageCalls += 1
+                return ([], nil)
+            }
+        )
+        let vm = SearchViewModel(client: client)
+        await vm.search("Swift")
+        await vm.loadMore()
+        #expect(pageCalls == 0)
     }
 
     // MARK: サジェスト
