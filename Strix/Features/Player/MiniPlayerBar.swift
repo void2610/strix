@@ -16,6 +16,8 @@ private struct MiniPlayerVideoView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PlayerLayerUIView {
         let view = PlayerLayerUIView()
+        // 最初のフレームが描画されるまで AVPlayerLayer は透明なので下地を黒にする
+        view.backgroundColor = .black
         view.playerLayer.player = player
         view.playerLayer.videoGravity = .resizeAspectFill
         return view
@@ -124,11 +126,13 @@ struct MiniPlayerView: View {
             .overlay(alignment: .topTrailing) {
                 Button(action: onClose) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
+                        .font(.system(size: 34))
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .black.opacity(0.5))
+                        .frame(width: 48, height: 48)
+                        .contentShape(Rectangle())
                 }
-                .padding(8)
+                .padding(2)
             }
             .frame(width: videoWidth, height: videoHeight)
             .position(x: displayX + videoWidth / 2, y: displayY + videoHeight / 2)
