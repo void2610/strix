@@ -28,6 +28,8 @@ struct VideoInfo {
     let channelAvatarURL: URL?
     /// 再生に使ったクライアントのトラッキング URL（ログインアカウントには紐づかないため、視聴履歴の送信先は resolvePlaybackTracking で決める）
     var playbackTrackingURLs: PlaybackTrackingURLs? = nil
+    /// シークバーのサムネイル用（WEB / WebPage では返らない）
+    var storyboard: Storyboard? = nil
 }
 
 /// YouTube の /player レスポンスに含まれる再生トラッキング URL
@@ -149,7 +151,7 @@ extension YouTubeClient {
         }
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
-                         playbackTrackingURLs: meta.trackingURLs)
+                         playbackTrackingURLs: meta.trackingURLs, storyboard: extractStoryboard(from: json))
     }
 
     // MARK: - VISIONOS クライアント（PO Token 不要、HLS を返す）
@@ -229,7 +231,7 @@ extension YouTubeClient {
         }
         return VideoInfo(streamURL: streamURL, audioOnlyURL: meta.audioOnlyURL, title: meta.title, thumbnailURL: meta.thumbnailURL,
                          channelId: meta.channelId, channelName: meta.channelName, channelAvatarURL: meta.channelAvatarURL,
-                         playbackTrackingURLs: meta.trackingURLs)
+                         playbackTrackingURLs: meta.trackingURLs, storyboard: extractStoryboard(from: json))
     }
 
     // MARK: - WEB クライアント（Cookie 認証、combined formats を返す）
@@ -394,6 +396,11 @@ extension YouTubeClient {
         }
 
         return (title, thumbnailURL, channelId, channelName, channelAvatarURL, audioOnlyURL, extractTrackingURLs(from: json))
+    }
+
+    static func extractStoryboard(from json: [String: Any]) -> Storyboard? {
+        let renderer = (json["storyboards"] as? [String: Any])?["playerStoryboardSpecRenderer"] as? [String: Any]
+        return (renderer?["spec"] as? String).flatMap { Storyboard(spec: $0) }
     }
 
     /// /player レスポンスから視聴トラッキング URL を抽出する。

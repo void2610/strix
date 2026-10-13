@@ -780,6 +780,15 @@ struct YouTubeClientTests {
         #expect((response as? HTTPURLResponse)?.statusCode == 200)
     }
 
+    /// シークサムネイル用のストーリーボード画像が取得でき、コマの格子と同じ大きさであること
+    @Test func storyboardSheetIsFetchable() async throws {
+        let info = try await YouTubeClient.live.fetchVideo("9bZkp7q19f0")
+        let storyboard = try #require(info.storyboard)
+        let frame = try #require(storyboard.frame(at: 0))
+        let image = try #require(await StoryboardSheetCache.shared.image(for: frame.sheetURL))
+        #expect(image.width == storyboard.frameWidth * storyboard.columns)
+    }
+
     /// 音声のみモードの音声 URL も末尾まで取得できること（PO Token が要るクライアントの URL は先頭約 1 分より先が 403 になる）
     @Test func sabrVideoAudioOnlyURLIsFetchableToEnd() async throws {
         let info = try await YouTubeClient.live.fetchVideo("9bZkp7q19f0")
@@ -875,6 +884,13 @@ struct ContentClientTests {
         }
         #expect(!more.isEmpty)
         #expect(more.map(\.videoId) != first.map(\.videoId))
+    }
+
+    @Test func fetchRelatedReturnsChapters() async throws {
+        // 概要欄にチャプターがある動画
+        let result = try await ContentClient.live.fetchRelated("-Vv7eGoBHzE")
+        #expect(result.chapters.count >= 2)
+        #expect(result.chapters.first?.startSeconds == 0)
     }
 
     @Test func fetchRelatedReturnsVideos() async throws {
@@ -3293,5 +3309,167 @@ struct PlayerViewModelOfflineTests {
                              channelId: nil, channelName: nil, channelAvatarURL: nil)
         let item = vm.makePlayerItem(info: info, audioOnly: true)
         #expect((item.asset as? AVURLAsset)?.url == fileURL)
+    }
+}
+
+// MARK: - Storyboard ユニットテスト
+
+struct StoryboardTests {
+    // 実際の spec と同じ書式（レベル 0 は間隔 0 の 1 枚絵）
+    private let spec = "https://i.ytimg.com/sb/abc/storyboard3_L$L/$N.jpg?sqp=x|48#27#100#10#10#0#default#rs$A|80#45#106#10#10#5000#M$M#rs$B|160#90#106#5#5#5000#M$M#rs$C"
+
+    @Test func parseChoosesLargestLevel() throws {
+        let sb = try #require(Storyboard(spec: spec))
+        #expect(sb.level == 2)
+        #expect(sb.frameWidth == 160 && sb.frameHeight == 90)
+        #expect(sb.columns == 5 && sb.rows == 5)
+        #expect(sb.intervalMilliseconds == 5000)
+    }
+
+    @Test func frameLocatesSheetAndCell() throws {
+        let sb = try #require(Storyboard(spec: spec))
+        // 130 秒は 26 コマ目（0 始まり）で、2 枚目の画像の 2 番目
+        let frame = try #require(sb.frame(at: 130))
+        #expect(frame.sheetURL.absoluteString == "https://i.ytimg.com/sb/abc/storyboard3_L2/M1.jpg?sqp=x&sigh=rs$C")
+        #expect(frame.rect == CGRect(x: 160, y: 0, width: 160, height: 90))
+    }
+
+    @Test func frameClampsToLastFrame() throws {
+        let sb = try #require(Storyboard(spec: spec))
+        // 106 コマ目以降は最後のコマ（5 枚目の 6 番目）に留める
+        let frame = try #require(sb.frame(at: 10_000))
+        #expect(frame.sheetURL.absoluteString.contains("/M4.jpg"))
+        #expect(frame.rect == CGRect(x: 0, y: 90, width: 160, height: 90))
+    }
+
+    @Test func parseRejectsSpecWithoutTimedLevel() {
+        #expect(Storyboard(spec: "https://example.com/$L/$N.jpg|48#27#100#10#10#0#default#rs$A") == nil)
+        #expect(Storyboard(spec: "") == nil)
+    }
+}
+
+// MARK: - /next のチャプター・高評価 パーサーテスト
+
+struct WatchNextParsingTests {
+
+    private func chapter(_ title: String, _ millis: Int) -> [String: Any] {
+        ["chapterRenderer": [
+            "title": ["simpleText": title],
+            "timeRangeStartMillis": millis,
+            "thumbnail": ["thumbnails": [["url": "https://i.ytimg.com/\(title).jpg"]]]
+        ]]
+    }
+
+    private func nextJSON(markers: [[String: Any]]) -> [String: Any] {
+        ["playerOverlays": ["playerOverlayRenderer": ["decoratedPlayerBarRenderer": ["decoratedPlayerBarRenderer": [
+            "playerBar": ["multiMarkersPlayerBarRenderer": ["markersMap": markers]]
+        ]]]]]
+    }
+
+    @Test func extractChaptersPrefersDescriptionChapters() {
+        let json = nextJSON(markers: [
+            ["key": "AUTO_CHAPTERS", "value": ["chapters": [chapter("自動", 0)]]],
+            ["key": "DESCRIPTION_CHAPTERS", "value": ["chapters": [chapter("後半", 90000), chapter("序章", 0)]]]
+        ])
+        let chapters = ContentClient.extractChapters(from: json)
+        #expect(chapters.map(\.title) == ["序章", "後半"])
+        #expect(chapters.map(\.startSeconds) == [0, 90])
+        #expect(chapters.first?.thumbnailURL?.absoluteString == "https://i.ytimg.com/序章.jpg".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
+    }
+
+    @Test func extractChaptersFallsBackToAutoChapters() {
+        let json = nextJSON(markers: [["key": "AUTO_CHAPTERS", "value": ["chapters": [chapter("自動", 0)]]]])
+        #expect(ContentClient.extractChapters(from: json).map(\.title) == ["自動"])
+    }
+
+    @Test func extractChaptersReturnsEmptyWithoutMarkers() {
+        #expect(ContentClient.extractChapters(from: ["contents": [:]]).isEmpty)
+    }
+
+    @Test func currentChapterIsLastStartedOne() {
+        let chapters = [
+            VideoChapter(title: "A", startSeconds: 0, thumbnailURL: nil),
+            VideoChapter(title: "B", startSeconds: 60, thumbnailURL: nil)
+        ]
+        #expect(VideoChapter.current(in: chapters, at: 59)?.title == "A")
+        #expect(VideoChapter.current(in: chapters, at: 60)?.title == "B")
+        #expect(VideoChapter.current(in: [], at: 10) == nil)
+    }
+
+    private func likeJSON(status: String) -> [String: Any] {
+        ["contents": ["videoPrimaryInfoRenderer": ["videoActions": ["menuRenderer": ["topLevelButtons": [
+            ["segmentedLikeDislikeButtonViewModel": [
+                "likeButtonViewModel": ["likeButtonViewModel": [
+                    "likeStatusEntity": ["likeStatus": status],
+                    "toggleButtonViewModel": ["toggleButtonViewModel": [
+                        "defaultButtonViewModel": ["buttonViewModel": ["title": "5368"]],
+                        "toggledButtonViewModel": ["buttonViewModel": ["title": "5369"]]
+                    ]]
+                ]]
+            ]]
+        ]]]]]]
+    }
+
+    @Test func extractLikeStateReadsStatusAndCounts() throws {
+        let liked = try #require(ContentClient.extractLikeState(from: likeJSON(status: "LIKE")))
+        #expect(liked.isLiked)
+        #expect(liked.displayCountText == "5369")
+
+        let notLiked = try #require(ContentClient.extractLikeState(from: likeJSON(status: "INDIFFERENT")))
+        #expect(!notLiked.isLiked)
+        #expect(notLiked.displayCountText == "5368")
+    }
+
+    @Test func extractLikeStateReturnsNilWhenSignInRequired() {
+        // 未ログインの応答では、押すとログインを促す signInEndpoint が付く
+        let json: [String: Any] = ["segmentedLikeDislikeButtonViewModel": [
+            "likeButtonViewModel": ["likeButtonViewModel": [
+                "likeStatusEntity": ["likeStatus": "INDIFFERENT"],
+                "toggleButtonViewModel": ["toggleButtonViewModel": [
+                    "defaultButtonViewModel": ["buttonViewModel": [
+                        "title": "5368",
+                        "onTap": ["innertubeCommand": ["modalEndpoint": ["modal": ["signInEndpoint": [:]]]]]
+                    ]]
+                ]]
+            ]]
+        ]]
+        #expect(ContentClient.extractLikeState(from: json) == nil)
+    }
+
+    @Test func extractLikeStateReturnsNilWithoutButton() {
+        #expect(ContentClient.extractLikeState(from: ["contents": [:]]) == nil)
+    }
+}
+
+// MARK: - 高評価の切り替え
+
+@MainActor
+struct PlayerLikeTests {
+
+    private func makeVM(setLiked: @escaping (String, Bool) async throws -> Void) throws -> (PlayerViewModel, ModelContext) {
+        let youtubeClient = YouTubeClient(fetchVideo: { _ in throw YouTubeClientError.streamNotFound })
+        let contentClient = ContentClient.mock(
+            fetchRelated: { _ in WatchNextInfo(like: LikeState(isLiked: false, countText: "10", likedCountText: "11")) },
+            setLiked: setLiked
+        )
+        let container = try ModelContainer(for: WatchedVideo.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        return (PlayerViewModel(youtubeClient: youtubeClient, contentClient: contentClient), ModelContext(container))
+    }
+
+    @Test func toggleLikeSendsAndUpdatesState() async throws {
+        var sent: [(String, Bool)] = []
+        let (vm, ctx) = try makeVM { id, liked in sent.append((id, liked)) }
+        await vm.load(videoID: "v1", modelContext: ctx)
+        await vm.toggleLike()
+        #expect(vm.likeState?.isLiked == true)
+        #expect(vm.likeState?.displayCountText == "11")
+        #expect(sent.map(\.0) == ["v1"] && sent.map(\.1) == [true])
+    }
+
+    @Test func toggleLikeRevertsOnFailure() async throws {
+        let (vm, ctx) = try makeVM { _, _ in throw URLError(.notConnectedToInternet) }
+        await vm.load(videoID: "v1", modelContext: ctx)
+        await vm.toggleLike()
+        #expect(vm.likeState?.isLiked == false)
     }
 }

@@ -42,6 +42,10 @@ final class PlayerViewModel {
     var videoDescription: String?
     var viewCountText: String?
     var publishDateText: String?
+    var chapters: [VideoChapter] = []
+    /// 高評価ボタンの状態（未ログインで評価できないときは nil）
+    var likeState: LikeState?
+    private var isSendingLike = false
     /// コメント一覧
     var comments: [CommentItem] = []
     var isLoadingComments = true
@@ -109,6 +113,8 @@ final class PlayerViewModel {
         videoDescription = nil
         viewCountText = nil
         publishDateText = nil
+        chapters = []
+        likeState = nil
         comments = []
         isLoadingComments = true
         commentsContinuation = nil
@@ -199,15 +205,38 @@ final class PlayerViewModel {
     private func loadRelated(videoID: String) async {
         do {
             let result = try await contentClient.fetchRelated(videoID)
+            guard loadedVideoID == videoID else { return }
             relatedVideos = result.videos
             ownerAvatarURL = result.ownerAvatarURL
             videoDescription = result.description
             viewCountText = result.viewCount
             publishDateText = result.publishDate
+            chapters = result.chapters
+            likeState = result.like
         } catch {
             strixLog("関連動画取得エラー: \(error.localizedDescription)")
         }
         isLoadingRelated = false
+    }
+
+    /// 高評価を切り替える。先に表示を変え、送信に失敗したら戻す。
+    func toggleLike() async {
+        guard let videoID = loadedVideoID, let current = likeState, !isSendingLike else { return }
+        isSendingLike = true
+        defer { isSendingLike = false }
+        likeState?.isLiked = !current.isLiked
+        do {
+            try await contentClient.setLiked(videoID, !current.isLiked)
+        } catch {
+            strixLog("高評価の送信エラー: \(error.localizedDescription)")
+            if loadedVideoID == videoID { likeState = current }
+        }
+    }
+
+    /// 指定位置へ移動する（チャプター一覧から呼ぶ）
+    func seek(to seconds: Double) {
+        player?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        player?.play()
     }
 
     private func loadComments(videoID: String) async {

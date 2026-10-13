@@ -445,39 +445,51 @@ struct CustomPlayerView: View {
     private var bottomBar: some View {
         VStack {
             Spacer()
-            HStack(spacing: 10) {
-                Text(formatTime(displayedTime))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 40, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                // スクラブ中はプレビュー側にチャプター名を出す
+                if !controller.isScrubbing, let chapter = VideoChapter.current(in: vm.chapters, at: displayedTime) {
+                    Text(chapter.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .allowsHitTesting(false)
+                }
+                HStack(spacing: 10) {
+                    Text(PlaybackTimeFormatter.string(from: displayedTime))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 40, alignment: .leading)
 
-                PlayerSeekBar(
-                    // プレビュー優先で渡すことで、ドラッグ中もシーク完了待ちの間も同じ値で進捗を描画する
-                    currentTime: displayedTime,
-                    duration: duration,
-                    onScrub: { t in
-                        scrubPreviewTime = t
-                    },
-                    onSeek: { t in
-                        guard let player else { return }
-                        let target = CMTime(seconds: t, preferredTimescale: 600)
-                        // completionHandler でシーク完了を待ってからプレビューと isScrubbing を解除することで、
-                        // PeriodicTimeObserver の currentTime が追いつく前に「元の位置に戻る」ちらつきを防ぐ
-                        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
-                            Task { @MainActor in
-                                currentTime = t
-                                scrubPreviewTime = nil
-                                controller.isScrubbing = false
-                                controller.bumpFade()
+                    PlayerSeekBar(
+                        // プレビュー優先で渡すことで、ドラッグ中もシーク完了待ちの間も同じ値で進捗を描画する
+                        currentTime: displayedTime,
+                        duration: duration,
+                        onScrub: { t in
+                            scrubPreviewTime = t
+                        },
+                        onSeek: { t in
+                            guard let player else { return }
+                            let target = CMTime(seconds: t, preferredTimescale: 600)
+                            // completionHandler でシーク完了を待ってからプレビューと isScrubbing を解除することで、
+                            // PeriodicTimeObserver の currentTime が追いつく前に「元の位置に戻る」ちらつきを防ぐ
+                            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                                Task { @MainActor in
+                                    currentTime = t
+                                    scrubPreviewTime = nil
+                                    controller.isScrubbing = false
+                                    controller.bumpFade()
+                                }
                             }
-                        }
-                    }
-                )
+                        },
+                        chapters: vm.chapters,
+                        storyboard: vm.videoInfo?.storyboard
+                    )
 
-                Text(formatTime(max(duration, 0)))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 40, alignment: .trailing)
+                    Text(PlaybackTimeFormatter.string(from: max(duration, 0)))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 40, alignment: .trailing)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
@@ -610,19 +622,6 @@ struct CustomPlayerView: View {
             player.pause()
         } else {
             player.play()
-        }
-    }
-
-    private func formatTime(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
-        } else {
-            return String(format: "%d:%02d", m, s)
         }
     }
 

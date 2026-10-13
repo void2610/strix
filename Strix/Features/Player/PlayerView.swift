@@ -74,6 +74,10 @@ struct PlayerView: View {
                             videoMeta(info: info)
                         }
 
+                        if !vm.chapters.isEmpty {
+                            chaptersSection
+                        }
+
                         Divider()
                             .padding(.top, 8)
 
@@ -271,6 +275,77 @@ struct PlayerView: View {
             if let channelName = info.channelName {
                 channelRow(name: channelName, channelId: info.channelId)
             }
+
+            if let like = vm.likeState {
+                likeButton(like)
+            }
+        }
+    }
+
+    private func likeButton(_ like: LikeState) -> some View {
+        Button {
+            Task { await vm.toggleLike() }
+        } label: {
+            Label(like.displayCountText ?? "高評価", systemImage: like.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color(.secondarySystemBackground), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+    }
+
+    // MARK: - チャプター
+
+    private var chaptersSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("チャプター")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 12) {
+                    ForEach(vm.chapters) { chapter in
+                        Button {
+                            vm.seek(to: chapter.startSeconds)
+                        } label: {
+                            chapterCard(chapter)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func chapterCard(_ chapter: VideoChapter) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LazyImage(url: chapter.thumbnailURL) { state in
+                if let image = state.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    Color(.secondarySystemBackground)
+                }
+            }
+            .frame(width: 128, height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .bottomTrailing) {
+                Text(PlaybackTimeFormatter.string(from: chapter.startSeconds))
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
+                    .padding(4)
+            }
+            Text(chapter.title)
+                .font(.caption)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(width: 128, alignment: .leading)
         }
     }
 

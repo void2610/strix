@@ -52,8 +52,10 @@ struct ContentClient {
     var searchPage: (String) async throws -> ([VideoItem], String?)
     /// 検索オートコンプリート候補を取得する
     var searchSuggestions: (String) async throws -> [String]
-    /// 関連動画・動画オーナーアバター・説明欄データを返す
-    var fetchRelated: (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?)
+    /// 関連動画・動画オーナーアバター・説明欄・チャプター・高評価の状態を返す
+    var fetchRelated: (String) async throws -> WatchNextInfo
+    /// 動画を高評価する（false で取り消す）
+    var setLiked: (_ videoId: String, _ liked: Bool) async throws -> Void
     var fetchChannel: (String) async throws -> ChannelInfo
     /// チャンネルを登録する
     var subscribe: (_ channelId: String) async throws -> Void
@@ -83,7 +85,8 @@ extension ContentClient {
         search: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         searchPage: @escaping (String) async throws -> ([VideoItem], String?) = { _ in ([], nil) },
         searchSuggestions: @escaping (String) async throws -> [String] = { _ in [] },
-        fetchRelated: @escaping (String) async throws -> (videos: [VideoItem], ownerAvatarURL: URL?, description: String?, viewCount: String?, publishDate: String?) = { _ in ([], nil, nil, nil, nil) },
+        fetchRelated: @escaping (String) async throws -> WatchNextInfo = { _ in WatchNextInfo() },
+        setLiked: @escaping (String, Bool) async throws -> Void = { _, _ in },
         fetchChannel: @escaping (String) async throws -> ChannelInfo = { id in ChannelInfo(channelId: id, name: nil, handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil) },
         subscribe: @escaping (String) async throws -> Void = { _ in },
         unsubscribe: @escaping (String) async throws -> Void = { _ in },
@@ -93,7 +96,7 @@ extension ContentClient {
         fetchComments: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) },
         fetchCommentsPage: @escaping (String) async throws -> (comments: [CommentItem], continuation: String?) = { _ in ([], nil) }
     ) -> ContentClient {
-        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, searchPage: searchPage, searchSuggestions: searchSuggestions, fetchRelated: fetchRelated, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
+        ContentClient(fetchHome: fetchHome, fetchHomePage: fetchHomePage, fetchHistoryVideos: fetchHistoryVideos, fetchHistoryPage: fetchHistoryPage, fetchPlaylistVideos: fetchPlaylistVideos, search: search, searchPage: searchPage, searchSuggestions: searchSuggestions, fetchRelated: fetchRelated, setLiked: setLiked, fetchChannel: fetchChannel, subscribe: subscribe, unsubscribe: unsubscribe, fetchChannelTab: fetchChannelTab, fetchChannelTabPage: fetchChannelTabPage, fetchChannelPlaylists: fetchChannelPlaylists, fetchComments: fetchComments, fetchCommentsPage: fetchCommentsPage)
     }
 }
 
@@ -159,13 +162,21 @@ extension ContentClient {
                 try await ContentClient.fetchSearchSuggestions(query: query)
             },
             fetchRelated: { videoID in
-                let cookies = ""
-                let json = try await ContentClient.callNextAPI(params: ["videoId": videoID], cookies: cookies)
-                let videos = findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }.filter { $0.videoId != videoID }
-                let ownerAvatarURL = extractOwnerAvatarURL(from: json)
-                // 説明欄データを抽出
+                let json = try await ContentClient.callNextAPI(params: ["videoId": videoID], cookies: "")
                 let (desc, viewCount, publishDate) = extractVideoDescription(from: json)
-                return (videos, ownerAvatarURL, desc, viewCount, publishDate)
+                return WatchNextInfo(
+                    videos: findVideoRenderers(in: json).compactMap { parseVideoRenderer($0) }.filter { $0.videoId != videoID },
+                    ownerAvatarURL: extractOwnerAvatarURL(from: json),
+                    description: desc,
+                    viewCount: viewCount,
+                    publishDate: publishDate,
+                    chapters: extractChapters(from: json),
+                    like: extractLikeState(from: json)
+                )
+            },
+            setLiked: { videoId, liked in
+                let url = liked ? YouTubeConstants.likeURL : YouTubeConstants.removeLikeURL
+                try await InnertubeRequest.performWeb(url: url, body: ["target": ["videoId": videoId]])
             },
             fetchChannel: { channelId in
                 let cookies = ""
