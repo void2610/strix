@@ -18,9 +18,9 @@ struct PlayerPanelContainer<Content: View>: View {
     @State private var panelPullOffset: CGFloat = 0
     @State private var isClosing = false
 
-    /// 閉じると判定する引き量と、指を離したときの勢いを含めた予測移動量
+    /// 閉じると判定する引き量と、払ったとみなす速さ（pt/秒）
     private let closeDistance: CGFloat = 120
-    private let closePredictedDistance: CGFloat = 260
+    private let closeFlickVelocity: CGFloat = 800
     /// 一覧のはみ出しはゴムの抵抗で縮むため、見出しを引くときより短い量で閉じる
     private let pullCloseDistance: CGFloat = 70
 
@@ -101,23 +101,22 @@ struct PlayerPanelContainer<Content: View>: View {
             : UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16, style: .continuous)
     }
 
-    private var dismissDrag: some Gesture {
-        // 引いている見出し自身がパネルと一緒に動くため、動かない画面全体の座標で測る（自身の座標だと引くたびに基準がずれて振動する）
-        DragGesture(minimumDistance: 4, coordinateSpace: .global)
-            .onChanged { value in
-                let t = isBottom ? value.translation.height : value.translation.width
+    /// ×ボタンの上から引き始めても追従させるため、UIKit のパン操作を使う
+    private var dismissDrag: DirectionalPanGesture {
+        DirectionalPanGesture(
+            direction: isBottom ? .down : .right,
+            onChange: { t, _ in
                 // 閉じる向きは指に追従し、逆向きは抵抗を付けて少しだけ動かす
                 dragOffset = t > 0 ? t : -sqrt(-t) * 2
-            }
-            .onEnded { value in
-                let t = isBottom ? value.translation.height : value.translation.width
-                let predicted = isBottom ? value.predictedEndTranslation.height : value.predictedEndTranslation.width
-                if t > closeDistance || predicted > closePredictedDistance {
+            },
+            onEnd: { t, v in
+                if t > closeDistance || v > closeFlickVelocity {
                     onClose()
                 } else {
                     withAnimation(.snappy(duration: 0.25)) { dragOffset = 0 }
                 }
             }
+        )
     }
 
     private var pullHandler: PanelPullHandler {

@@ -165,6 +165,9 @@ struct PlayerView: View {
 
     private var isFullScreen: Bool { coordinator.isFullScreen }
 
+    /// 下へ払ったとみなす速さ（pt/秒）。これより速ければ短く引いただけでも最小化する
+    private let minimizeFlickVelocity: CGFloat = 800
+
     // MARK: - プレイヤー
 
     private var playerSection: some View {
@@ -208,25 +211,21 @@ struct PlayerView: View {
                 .aspectRatio(16 / 9, contentMode: .fit)
             }
         }
+        // ボタンの上から引き始めても追従させ、全画面時は縦の操作を音量・明るさの調整に譲る
         .gesture(
-            // 引いている動画部分自身が画面ごと下へ動くため、動かない画面全体の座標で測る（自身の座標だと引くたびに基準がずれて振動する）
-            DragGesture(minimumDistance: 20, coordinateSpace: .global)
-                .onChanged { value in
-                    let ty = value.translation.height
-                    let tx = abs(value.translation.width)
-                    if ty > 0, ty > tx {
-                        var t = Transaction()
-                        t.disablesAnimations = true
-                        withTransaction(t) {
-                            coordinator.dragOffset = ty
-                        }
+            DirectionalPanGesture(
+                direction: .down,
+                isEnabled: !isFullScreen,
+                onChange: { ty, _ in
+                    var t = Transaction()
+                    t.disablesAnimations = true
+                    withTransaction(t) {
+                        coordinator.dragOffset = max(0, ty)
                     }
-                }
-                .onEnded { value in
-                    let ty = value.translation.height
-                    let vy = value.predictedEndTranslation.height
+                },
+                onEnd: { ty, vy in
                     let screenHeight = UIScreen.main.bounds.height
-                    if ty > screenHeight * 0.15 || vy > 300 {
+                    if ty > screenHeight * 0.15 || vy > minimizeFlickVelocity {
                         withAnimation(.easeOut(duration: 0.2)) {
                             coordinator.dragOffset = screenHeight
                         } completion: {
@@ -239,6 +238,7 @@ struct PlayerView: View {
                         }
                     }
                 }
+            )
         )
     }
 
