@@ -84,6 +84,8 @@ Innertube `/browse/edit_playlist` エンドポイントで以下の操作を実�
 - `PlayerContainerView`: RootTabView のオーバーレイ。フルスクリーンとミニプレイヤーの切替を管理
 - ミニプレイヤー: `AVPlayerLayer` ベースの小窓（200×112pt）で映像をリアルタイム表示。最初のフレームが描かれるまで `AVPlayerLayer` は透明なので、下地を黒にしている
 - 映像エリアの下スワイプでミニプレイヤーに遷移、タップでフルスクリーン復帰
+- 引いて動かす操作は、引いている部分自身が動くため、`DragGesture(coordinateSpace: .global)` で動かない画面全体の座標で測る。自身の座標で測ると、引くたびに基準がずれてゆっくり引いたときに振動する
+- 再生画面は `NavigationStack` で包まない。UIKit の画面管理は画面上の実際の位置から安全領域を計算し直すため、下へ引いて状態バーと重ならなくなると上の余白が 0 になり、中身が押し戻されて暴れる。安全領域は窓の値を `safeAreaPadding` で付け直す
 
 ### アカウント情報（AccountClient）
 
