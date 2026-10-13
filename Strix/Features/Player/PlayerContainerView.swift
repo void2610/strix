@@ -78,14 +78,18 @@ struct PlayerContainerView: View {
             (coordinator.isFullScreen ? Color.black : Color(.systemBackground))
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                NavigationStack {
-                    PlayerView(videoID: coordinator.currentVideoID ?? "", vm: vm)
-                }
-            }
+            // NavigationStack で包まない。UIKit の画面管理は画面上の位置から安全領域を計算し直すため、引いて下げると中身が押し戻されて暴れる
+            PlayerView(videoID: coordinator.currentVideoID ?? "", vm: vm)
+                // 外側で安全領域を無視しているので、引いている間も変わらない窓の値で付け直す
+                .safeAreaPadding(windowSafeAreaInsets)
         }
         .offset(y: coordinator.dragOffset)
         .transition(.move(edge: .bottom))
+    }
+
+    private var windowSafeAreaInsets: EdgeInsets {
+        let insets = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow?.safeAreaInsets ?? .zero
+        return EdgeInsets(top: insets.top, leading: insets.left, bottom: insets.bottom, trailing: insets.right)
     }
 
     // MARK: - プレイヤー終了

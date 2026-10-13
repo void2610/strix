@@ -129,7 +129,6 @@ struct PlayerView: View {
         .onChange(of: vm.loadedVideoID) { _, _ in
             closePanel()
         }
-        .navigationBarTitleDisplayMode(.inline)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
                 vm.savePlaybackPosition(modelContext: modelContext)
@@ -210,7 +209,8 @@ struct PlayerView: View {
             }
         }
         .gesture(
-            DragGesture(minimumDistance: 20)
+            // 引いている動画部分自身が画面ごと下へ動くため、動かない画面全体の座標で測る（自身の座標だと引くたびに基準がずれて振動する）
+            DragGesture(minimumDistance: 20, coordinateSpace: .global)
                 .onChanged { value in
                     let ty = value.translation.height
                     let tx = abs(value.translation.width)
