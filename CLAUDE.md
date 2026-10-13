@@ -69,6 +69,9 @@ xcodebuild test -project Strix.xcodeproj -scheme Strix \
 - **実機デバッグは最終手段**。シミュレータやテストで足りない理由を明確にすること
 - **最新ビルドのデリバリー**はデバッグとは別扱い。デバイス到達可能なら原則毎回実機インストール
 - デバッグ用の一時コードは原因特定後に必ず削除
+- **ドラッグで揺れる・暴れる類の不具合は、直す前に記録で操作を確定する**。どの操作の話かを推測で決めない
+  - 実機: Documents にファイルを追記する一時記録を入れたビルドでユーザーに 1 回操作してもらい、`devicectl device copy from` で取り出す
+  - シミュレータ: `StrixUITests` の一時テストで `press(forDuration:thenDragTo:withVelocity:)` を使うと速さを指定してドラッグできる。`-parallel-testing-enabled NO` で起動中のシミュレータを使い、`simctl io recordVideo` で録画してコマごとに位置を測る（ffmpeg で縦の列を切り出すときは幅 2 以上。幅 1 だと rgb24 変換で失敗する）
 - 新しい ViewModel・ロジック・ユーティリティには対応テストを同時実装
 - **テスト分類**:
   - ユニットテスト: `ContentClient.mock()` 等でネットワーク不要
