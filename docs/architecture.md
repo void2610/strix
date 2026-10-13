@@ -18,8 +18,14 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
 
 - **ホームフィード**: `/browse`（WEB client）を URLSession で直接呼ぶ
   - `httpShouldSetCookies = false` の ephemeral session でシステム Cookie 上書きを防止
-- **検索**: YouTubeKit の `SearchResponse` を使用（唯一の YouTubeKit 依存）
-- **関連動画**: `/next` API から lockupViewModel をパース
+- **検索**: `/search`（WEB client）を直接呼び、ホームと同じパーサーで動画を取り出す（メンバー限定・広告の除外も効く）
+  - 続きのトークンは結果末尾の `continuationItemRenderer` から取る。絞り込みチップも `continuationCommand` を持つため、汎用の `extractContinuationToken` では別の絞り込みのページを拾うことがある
+  - 続きのページはショートだけで通常の動画が 0 件のことがあるので、1 回の追加読み込みで数ページまで先を試す
+  - 再生リスト・コースの lockup は動画として再生できないので検索結果から除く
+- **関連動画**: `/next` API から lockupViewModel をパース。同じ応答から説明欄・チャプター・高評価の状態も取り出し、`WatchNextInfo` にまとめて返す
+  - **チャプター**: シークバーのマーカー（`markersMap`）の `DESCRIPTION_CHAPTERS` を、無ければ `AUTO_CHAPTERS` を使う
+  - **高評価**: `segmentedLikeDislikeButtonViewModel` の `likeStatusEntity.likeStatus` が状態。件数は未評価時（`defaultButtonViewModel`）と評価時（`toggledButtonViewModel`）の表示が両方入っている。未ログインの応答はボタンに `signInEndpoint` が付くので、そのときはボタンを出さない（`AuthState` を見ないのは、テストで共有のログイン状態を書き換えずに済ませるため）
+  - 評価の送信は `/like/like`・`/like/removelike` に `target.videoId` だけを送る
 - **チャンネル**: `/browse` でチャンネルページ取得
 
 認証ヘッダー: `Cookie` + `SAPISIDHASH`（`Authorization`）+ `X-Goog-AuthUser: 0`
@@ -33,6 +39,14 @@ Innertube WEB クライアント + Cookie + SAPISIDHASH 認証。
 4. **WebPage**（WKWebView + fetch/XHR インターセプト） — モバイル版 YouTube を読み込み、再生を開始させた後、`googlevideo.com/videoplayback` への fetch/XHR リクエストをフックして署名デコード済み URL を取得。combined format（itag 18/22）を優先
 
 ANDROID_VR（1.65.10）は 2026-08-17 以降、itag18 を含む全フォーマットが 403 になったため再生経路から外した。それ以前から PO Token 未提示のストリームは「先頭約 1 分（2.5MB 前後）だけ取得でき、それより先の Range は 403」になっており、`/player` が URL を返しても再生が途中で止まる。ストリームの可否は URL の有無ではなく末尾まで取得できるかで判定する（`YouTubeClientTests` の結合テスト）。
+
+### シークサムネイル（Storyboard）
+
+VISIONOS と IOS の `/player` は `storyboards.playerStoryboardSpecRenderer.spec` を返す（WEB / WebPage は返さないので、そのときはサムネイルを出さない）。spec は「URL のひな形|レベル0|レベル1|…」で、各レベルは「幅#高さ#コマ数#列#行#間隔ms#画像名#署名」。
+
+- 一番大きいレベル（多くは 160×90）を使う。レベル 0 は間隔 0 の 1 枚絵なので使わない
+- 画像は列×行の格子にコマを並べたもの。コマ番号 = 時刻 ÷ 間隔、画像番号 = コマ番号 ÷（列×行）で、URL の `$L` をレベル、`$N` の `$M` を画像番号に置き換え、`&sigh=署名` を付ける
+- 取得した画像は `StoryboardSheetCache` に持ち、同じ画像への同時要求は 1 回の通信にまとめる
 
 ### 視聴履歴のアカウント記録（PlaybackTracker）
 
