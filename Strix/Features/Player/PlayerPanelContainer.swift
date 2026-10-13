@@ -102,7 +102,8 @@ struct PlayerPanelContainer<Content: View>: View {
     }
 
     private var dismissDrag: some Gesture {
-        DragGesture(minimumDistance: 4)
+        // 引いている見出し自身がパネルと一緒に動くため、動かない画面全体の座標で測る（自身の座標だと引くたびに基準がずれて振動する）
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
                 let t = isBottom ? value.translation.height : value.translation.width
                 // 閉じる向きは指に追従し、逆向きは抵抗を付けて少しだけ動かす
