@@ -75,6 +75,13 @@ final class ChannelViewModel {
         isLoadingTab = false
     }
 
+    /// 隣のタブへ移る（offset が正なら右隣）。端では何もしない
+    func selectAdjacentTab(_ offset: Int) async {
+        let tabs = ChannelTab.allCases
+        guard let index = tabs.firstIndex(of: selectedTab), tabs.indices.contains(index + offset) else { return }
+        await selectTab(tabs[index + offset])
+    }
+
     /// 現在のタブの次ページを読み込む
     func loadMore() async {
         guard let continuation = tabContinuations[selectedTab] as? String,
@@ -177,34 +184,47 @@ struct ChannelView: View {
                 tabContent
             }
         }
+        .gesture(
+            DirectionalPanGesture(direction: .horizontal, onChange: { _, _ in }) { translation, velocity in
+                guard abs(translation) > 60 || abs(velocity) > 500 else { return }
+                Task { await vm.selectAdjacentTab(translation < 0 ? 1 : -1) }
+            }
+        )
     }
 
     // MARK: - タブ切り替え
 
     private var tabPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(ChannelTab.allCases, id: \.self) { tab in
-                    Button {
-                        Task { await vm.selectTab(tab) }
-                    } label: {
-                        Text(tab.rawValue)
-                            .font(.subheadline)
-                            .fontWeight(vm.selectedTab == tab ? .semibold : .regular)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                vm.selectedTab == tab
-                                    ? Color.primary.opacity(0.1)
-                                    : Color(.secondarySystemBackground),
-                                in: Capsule()
-                            )
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ChannelTab.allCases, id: \.self) { tab in
+                        Button {
+                            Task { await vm.selectTab(tab) }
+                        } label: {
+                            Text(tab.rawValue)
+                                .font(.subheadline)
+                                .fontWeight(vm.selectedTab == tab ? .semibold : .regular)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(
+                                    vm.selectedTab == tab
+                                        ? Color.primary.opacity(0.1)
+                                        : Color(.secondarySystemBackground),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .id(tab)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            // スワイプで画面外のタブへ移ったときも選択中のタブを見せる
+            .onChange(of: vm.selectedTab) { _, tab in
+                withAnimation { proxy.scrollTo(tab) }
+            }
         }
     }
 

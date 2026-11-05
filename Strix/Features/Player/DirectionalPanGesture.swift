@@ -6,6 +6,8 @@ import UIKit
 struct DirectionalPanGesture: UIGestureRecognizerRepresentable {
     enum Direction {
         case down, right
+        /// 左右どちらでも
+        case horizontal
     }
 
     let direction: Direction
@@ -60,7 +62,11 @@ final class DirectionalPanRecognizer: UIPanGestureRecognizer {
             let dx = point.x - start.x
             let dy = point.y - start.y
             if hypot(dx, dy) >= decisionDistance {
-                let along = direction == .down ? dy : dx
+                let along = switch direction {
+                case .down: dy
+                case .right: dx
+                case .horizontal: abs(dx)
+                }
                 let across = direction == .down ? dx : dy
                 if along <= abs(across) {
                     state = .failed

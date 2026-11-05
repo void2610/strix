@@ -668,6 +668,22 @@ struct ChannelViewModelTests {
         #expect(!vm.isLoading)
     }
 
+    @Test func selectAdjacentTabMovesOneStepAndStopsAtEdges() async {
+        let client = ContentClient.mock(fetchChannel: { _ in Self.makeInfo(subscribed: false) })
+        let vm = ChannelViewModel(contentClient: client)
+        await vm.load(channelId: "UC123")
+
+        await vm.selectAdjacentTab(-1)
+        #expect(vm.selectedTab == .home)
+        await vm.selectAdjacentTab(1)
+        #expect(vm.selectedTab == .videos)
+        vm.selectedTab = .playlists
+        await vm.selectAdjacentTab(1)
+        #expect(vm.selectedTab == .playlists)
+        await vm.selectAdjacentTab(-1)
+        #expect(vm.selectedTab == .live)
+    }
+
     private static func makeInfo(subscribed: Bool) -> ChannelInfo {
         ChannelInfo(channelId: "UC123", name: "テストチャンネル", handle: nil, subscriberCount: nil, videoCount: nil, avatarURL: nil, bannerURL: nil, subscribed: subscribed)
     }
