@@ -39,6 +39,13 @@ enum YouTubeConstants {
     static let webClientNameValue = "1"
     static let webUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
 
+    // MARK: - MWEB クライアント（ログイン中に WEB の /player が UNPLAYABLE を返す間も、アカウントに紐づくトラッキング URL を返す）
+
+    static let mwebClientName = "MWEB"
+    static let mwebClientVersion = "2.20261104.01.00"
+    static let mwebClientNameValue = "2"
+    static let mwebUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1,gzip(gfe)"
+
     // MARK: - IOS クライアント
 
     static let iosClientName = "IOS"

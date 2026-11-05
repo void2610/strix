@@ -413,12 +413,23 @@ extension YouTubeClient {
         return PlaybackTrackingURLs(videostatsPlaybackURL: playbackURL, videostatsWatchtimeURL: watchtimeURL)
     }
 
-    /// 視聴履歴用のトラッキング URL を認証付き WEB クライアントから取得する。
+    /// 視聴履歴用のトラッキング URL を認証付き MWEB クライアントから取得する。
     /// visionos 等の非認証クライアントのトラッキングはログインアカウントに紐づかず、送っても履歴に残らないため、これを使う。
     static func fetchAccountTrackingURLs(videoID: String) async -> PlaybackTrackingURLs? {
-        let body: [String: Any] = ["videoId": videoID, "contentCheckOk": true, "racyCheckOk": true]
-        // 応答全体は 200KB を超えて弱い電波では取得に時間がかかるため、トラッキング URL だけを返させる
-        let headers = ["X-Goog-FieldMask": "playabilityStatus.status,playbackTracking"]
+        let body: [String: Any] = [
+            "videoId": videoID, "contentCheckOk": true, "racyCheckOk": true,
+            "context": ["client": [
+                "clientName": YouTubeConstants.mwebClientName, "clientVersion": YouTubeConstants.mwebClientVersion,
+                "hl": YouTubeConstants.language, "gl": YouTubeConstants.region,
+            ]],
+        ]
+        let headers = [
+            // 応答全体は 200KB を超えて弱い電波では取得に時間がかかるため、トラッキング URL だけを返させる
+            "X-Goog-FieldMask": "playabilityStatus.status,playbackTracking",
+            "X-YouTube-Client-Name": YouTubeConstants.mwebClientNameValue,
+            "X-YouTube-Client-Version": YouTubeConstants.mwebClientVersion,
+            "User-Agent": YouTubeConstants.mwebUserAgent,
+        ]
         for delay: Duration in [.zero, .seconds(2), .seconds(5)] {
             if delay > .zero { try? await Task.sleep(for: delay) }
             if Task.isCancelled { return nil }
