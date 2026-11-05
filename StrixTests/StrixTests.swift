@@ -668,20 +668,14 @@ struct ChannelViewModelTests {
         #expect(!vm.isLoading)
     }
 
-    @Test func selectAdjacentTabMovesOneStepAndStopsAtEdges() async {
-        let client = ContentClient.mock(fetchChannel: { _ in Self.makeInfo(subscribed: false) })
-        let vm = ChannelViewModel(contentClient: client)
-        await vm.load(channelId: "UC123")
-
-        await vm.selectAdjacentTab(-1)
-        #expect(vm.selectedTab == .home)
-        await vm.selectAdjacentTab(1)
-        #expect(vm.selectedTab == .videos)
+    @Test func adjacentTabIsOneStepAndNilBeyondEdges() {
+        let vm = ChannelViewModel(contentClient: .mock())
+        vm.selectedTab = .home
+        #expect(vm.adjacentTab(-1) == nil)
+        #expect(vm.adjacentTab(1) == .videos)
         vm.selectedTab = .playlists
-        await vm.selectAdjacentTab(1)
-        #expect(vm.selectedTab == .playlists)
-        await vm.selectAdjacentTab(-1)
-        #expect(vm.selectedTab == .live)
+        #expect(vm.adjacentTab(1) == nil)
+        #expect(vm.adjacentTab(-1) == .live)
     }
 
     private static func makeInfo(subscribed: Bool) -> ChannelInfo {

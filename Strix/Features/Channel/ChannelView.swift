@@ -75,11 +75,11 @@ final class ChannelViewModel {
         isLoadingTab = false
     }
 
-    /// 隣のタブへ移る（offset が正なら右隣）。端では何もしない
-    func selectAdjacentTab(_ offset: Int) async {
+    /// 隣のタブ（offset が正なら右隣）。端の先には無い
+    func adjacentTab(_ offset: Int) -> ChannelTab? {
         let tabs = ChannelTab.allCases
-        guard let index = tabs.firstIndex(of: selectedTab), tabs.indices.contains(index + offset) else { return }
-        await selectTab(tabs[index + offset])
+        guard let index = tabs.firstIndex(of: selectedTab), tabs.indices.contains(index + offset) else { return nil }
+        return tabs[index + offset]
     }
 
     /// 現在のタブの次ページを読み込む
@@ -143,6 +143,9 @@ struct ChannelView: View {
     let channelId: String
 
     @State private var vm = ChannelViewModel()
+    /// タブの中身を指に合わせて横にずらす量
+    @State private var pageOffset: CGFloat = 0
+    @State private var pageWidth: CGFloat = 0
     @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
@@ -181,15 +184,46 @@ struct ChannelView: View {
                 Divider()
 
                 // タブコンテンツ
-                tabContent
+                VStack(spacing: 0) { tabContent }
+                    .offset(x: pageOffset)
             }
         }
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { pageWidth = $0 }
         .gesture(
-            DirectionalPanGesture(direction: .horizontal, onChange: { _, _ in }) { translation, velocity in
-                guard abs(translation) > 60 || abs(velocity) > 500 else { return }
-                Task { await vm.selectAdjacentTab(translation < 0 ? 1 : -1) }
-            }
+            DirectionalPanGesture(
+                direction: .horizontal,
+                leadingEdgeInset: 24,
+                onChange: { translation, _ in
+                    var t = Transaction()
+                    t.disablesAnimations = true
+                    // 隣のタブが無い向きには重く動かして、端であることを伝える
+                    let hasNext = vm.adjacentTab(translation < 0 ? 1 : -1) != nil
+                    withTransaction(t) { pageOffset = hasNext ? translation : translation / 3 }
+                },
+                onEnd: { translation, velocity in
+                    let offset = translation < 0 ? 1 : -1
+                    let flicked = abs(velocity) > 500 && (velocity < 0) == (translation < 0)
+                    guard abs(translation) > pageWidth * 0.25 || flicked, let next = vm.adjacentTab(offset) else {
+                        withAnimation(.spring(duration: 0.3)) { pageOffset = 0 }
+                        return
+                    }
+                    switchPage(to: next, direction: CGFloat(offset))
+                }
+            )
         )
+    }
+
+    /// 今の中身を払った向きへ送り出し、隣のタブの中身を反対側から入れる
+    private func switchPage(to tab: ChannelTab, direction: CGFloat) {
+        withAnimation(.easeIn(duration: 0.15)) {
+            pageOffset = -direction * pageWidth
+        } completion: {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { pageOffset = direction * pageWidth }
+            Task { await vm.selectTab(tab) }
+            withAnimation(.easeOut(duration: 0.2)) { pageOffset = 0 }
+        }
     }
 
     // MARK: - タブ切り替え
