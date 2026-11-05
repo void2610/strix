@@ -62,8 +62,9 @@ VISIONOS と IOS の `/player` は `storyboards.playerStoryboardSpecRenderer.spe
 再生とは別に、`/player` の `playbackTracking` にある URL へ送信して、YouTube アカウントの再生履歴に記録する。
 
 - **履歴に載るのは再生開始の送信**: `videostatsPlaybackUrl` への 1 回の送信で履歴に載る。`videostatsWatchtimeUrl` はどこまで見たかの更新で、これだけでは載らない。そのため再生開始の送信は、失敗したら間隔を空けて送り直し、すぐに別の動画へ移っても取り消さない
-- **送信先はログインアカウントに紐づく URL に限る**: VISIONOS / IOS など認証なしのクライアントが返す URL は、Cookie を付けて送っても履歴に残らない。ログイン中は認証付き WEB の `/player` から取得する（`YouTubeClient.resolvePlaybackTracking`）。アカウントに紐づく URL には `uga` パラメータが付く
-- **再生開始から切り離す**: 認証付き WEB の `/player` の応答は 200KB を超えるため、`X-Goog-FieldMask: playabilityStatus.status,playbackTracking` で約 3KB に絞り、再生を待たせずに非同期で取得する。以前は VISIONOS の応答から 2 秒で打ち切って認証なしの URL に切り替えていたため、弱い電波では履歴に残らなかった
+- **送信先はログインアカウントに紐づく URL に限る**: VISIONOS / IOS など認証なしのクライアントが返す URL は、Cookie を付けて送っても履歴に残らない。ログイン中は認証付き MWEB の `/player` から取得する（`YouTubeClient.resolvePlaybackTracking`）。アカウントに紐づく URL には `uga` パラメータが付く
+- **WEB ではなく MWEB を使う**: 2026-11 時点で、ログイン中の WEB / TVHTML5 / WEB_CREATOR の `/player` は clientVersion を最新にしても `UNPLAYABLE`（ページを再読み込みする必要があります）を返し、`playbackTracking` が付かない。このため送信先が取れず、どの動画も履歴に残っていなかった。MWEB は同じ Cookie で `OK` と `uga` 付きの URL を返す
+- **再生開始から切り離す**: 認証付きの `/player` の応答は 200KB を超えるため、`X-Goog-FieldMask: playabilityStatus.status,playbackTracking` で約 3KB に絞り、再生を待たせずに非同期で取得する。以前は VISIONOS の応答から 2 秒で打ち切って認証なしの URL に切り替えていたため、弱い電波では履歴に残らなかった
 - **オフライン再生も記録**: 保存済み動画を再生したときも、通信できればアカウント用の URL を取得して送る
 - **確認するときの注意**: `FEhistory` の「今日」の区切りは先頭がショートの棚（数百本になることがある）で、通常の動画はその後ろに並ぶ。先頭だけを見ると記録されていないように見える
 
