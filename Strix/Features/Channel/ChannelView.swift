@@ -153,6 +153,8 @@ struct ChannelView: View {
     @State private var pageWidth: CGFloat = 0
     /// 選択中のタブの中身の高さ（隣のタブはこの高さで切り、スクロール量を変えない）
     @State private var currentPageHeight: CGFloat = 0
+    /// タブ列の中での各タブの位置（下線の位置合わせに使う）
+    @State private var tabFrames: [ChannelTab: CGRect] = [:]
     @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
@@ -171,6 +173,9 @@ struct ChannelView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        // 上端に残したタブ列の上へ中身が透けないようにする
+        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .task { await vm.load(channelId: channelId) }
     }
 
@@ -178,20 +183,20 @@ struct ChannelView: View {
 
     private func channelContent(info: ChannelInfo) -> some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                 // バナー
                 bannerSection(info: info)
 
                 // チャンネルヘッダー
                 channelHeader(info: info)
 
-                // タブ切り替え
-                tabPicker
-
-                Divider()
-
-                // タブコンテンツ（左右の隣のタブも並べ、引いたときに続けて見せる）
-                pagedTabContent
+                // タブ列はスクロールしても上端に残す
+                Section {
+                    // タブコンテンツ（左右の隣のタブも並べ、引いたときに続けて見せる）
+                    pagedTabContent
+                } header: {
+                    tabPicker
+                }
             }
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { pageWidth = $0 }
@@ -265,34 +270,77 @@ struct ChannelView: View {
     private var tabPicker: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 0) {
                     ForEach(ChannelTab.allCases, id: \.self) { tab in
                         Button {
-                            Task { await vm.selectTab(tab) }
+                            tapTab(tab)
                         } label: {
                             Text(tab.rawValue)
                                 .font(.subheadline)
-                                .fontWeight(vm.selectedTab == tab ? .semibold : .regular)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(tab == highlightedTab ? Color.primary : Color.secondary)
                                 .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(
-                                    vm.selectedTab == tab
-                                        ? Color.primary.opacity(0.1)
-                                        : Color(.secondarySystemBackground),
-                                    in: Capsule()
-                                )
+                                .padding(.vertical, 12)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(tabBarSpace)) }) { tabFrames[tab] = $0 }
                         .id(tab)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 2)
+                .coordinateSpace(.named(tabBarSpace))
+                .overlay(alignment: .bottomLeading) { tabIndicator }
             }
             // スワイプで画面外のタブへ移ったときも選択中のタブを見せる
             .onChange(of: vm.selectedTab) { _, tab in
-                withAnimation { proxy.scrollTo(tab) }
+                withAnimation { proxy.scrollTo(tab, anchor: .center) }
             }
+        }
+        .background(Color(.systemBackground))
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private let tabBarSpace = "channelTabBar"
+
+    /// 隣のタブは払ったときと同じく横に送り、離れたタブは下線だけ動かして中身を切り替える
+    private func tapTab(_ tab: ChannelTab) {
+        guard tab != vm.selectedTab else { return }
+        Task { await vm.loadTab(tab) }
+        if tab == vm.adjacentTab(1) {
+            switchPage(to: tab, direction: 1)
+        } else if tab == vm.adjacentTab(-1) {
+            switchPage(to: tab, direction: -1)
+        } else {
+            withAnimation(.easeOut(duration: 0.25)) { vm.selectedTab = tab }
+        }
+    }
+
+    /// 引いている量の割合（左へ引くと正）
+    private var pageProgress: CGFloat {
+        guard pageWidth > 0 else { return 0 }
+        return -pageOffset / pageWidth
+    }
+
+    /// 下線が半分以上かかっているタブを、文字の強調にも使う
+    private var highlightedTab: ChannelTab {
+        guard abs(pageProgress) >= 0.5, let next = vm.adjacentTab(pageProgress > 0 ? 1 : -1) else { return vm.selectedTab }
+        return next
+    }
+
+    /// 選択中のタブの下線。引いている間は隣のタブへ指に合わせて移る
+    @ViewBuilder
+    private var tabIndicator: some View {
+        if let from = tabFrames[vm.selectedTab] {
+            let to = vm.adjacentTab(pageProgress > 0 ? 1 : -1).flatMap { tabFrames[$0] } ?? from
+            let t = min(abs(pageProgress), 1)
+            let inset: CGFloat = 10
+            let x = from.minX + (to.minX - from.minX) * t + inset
+            let width = from.width + (to.width - from.width) * t - inset * 2
+            Capsule()
+                .fill(Color.primary)
+                .frame(width: max(0, width), height: 3)
+                .offset(x: x)
         }
     }
 
