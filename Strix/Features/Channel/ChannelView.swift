@@ -20,7 +20,7 @@ final class ChannelViewModel {
     var tabContinuations: [ChannelTab: String?] = [:]
     var playlists: [ChannelPlaylistItem] = []
     var isLoading = true
-    var isLoadingTab = false
+    var loadingTabs: Set<ChannelTab> = []
     var isLoadingMore = false
     var isTogglingSubscription = false
     var error: String?
@@ -50,20 +50,25 @@ final class ChannelViewModel {
     /// タブ切り替え時にコンテンツを取得
     func selectTab(_ tab: ChannelTab) async {
         selectedTab = tab
-        guard let channelId = channelInfo?.channelId else { return }
+        await loadTab(tab)
+    }
+
+    /// タブの中身を、まだ持っていなければ取得する（選択は変えない）
+    func loadTab(_ tab: ChannelTab) async {
+        guard let channelId = channelInfo?.channelId, !loadingTabs.contains(tab) else { return }
 
         // 再生リストタブは専用ロジック
         if tab == .playlists {
             if !playlists.isEmpty { return }
-            isLoadingTab = true
+            loadingTabs.insert(tab)
             playlists = (try? await contentClient.fetchChannelPlaylists(channelId)) ?? []
-            isLoadingTab = false
+            loadingTabs.remove(tab)
             return
         }
 
         // 既にデータがあればスキップ
         if tabVideos[tab] != nil { return }
-        isLoadingTab = true
+        loadingTabs.insert(tab)
         do {
             let (videos, continuation) = try await contentClient.fetchChannelTab(channelId, tab)
             tabVideos[tab] = videos
@@ -72,7 +77,7 @@ final class ChannelViewModel {
             strixLog("チャンネルタブ取得エラー: \(error.localizedDescription)")
             tabVideos[tab] = []
         }
-        isLoadingTab = false
+        loadingTabs.remove(tab)
     }
 
     /// 隣のタブ（offset が正なら右隣）。端の先には無い
@@ -146,6 +151,8 @@ struct ChannelView: View {
     /// タブの中身を指に合わせて横にずらす量
     @State private var pageOffset: CGFloat = 0
     @State private var pageWidth: CGFloat = 0
+    /// 選択中のタブの中身の高さ（隣のタブはこの高さで切り、スクロール量を変えない）
+    @State private var currentPageHeight: CGFloat = 0
     @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
@@ -183,9 +190,8 @@ struct ChannelView: View {
 
                 Divider()
 
-                // タブコンテンツ
-                VStack(spacing: 0) { tabContent }
-                    .offset(x: pageOffset)
+                // タブコンテンツ（左右の隣のタブも並べ、引いたときに続けて見せる）
+                pagedTabContent
             }
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { pageWidth = $0 }
@@ -194,6 +200,9 @@ struct ChannelView: View {
                 direction: .horizontal,
                 leadingEdgeInset: 24,
                 onChange: { translation, _ in
+                    if let next = vm.adjacentTab(translation < 0 ? 1 : -1) {
+                        Task { await vm.loadTab(next) }
+                    }
                     var t = Transaction()
                     t.disablesAnimations = true
                     // 隣のタブが無い向きには重く動かして、端であることを伝える
@@ -213,17 +222,42 @@ struct ChannelView: View {
         )
     }
 
-    /// 今の中身を払った向きへ送り出し、隣のタブの中身を反対側から入れる
+    /// 並べてある隣のタブまで送り、送り終えたら選択を移して位置を戻す（見た目は変わらない）
     private func switchPage(to tab: ChannelTab, direction: CGFloat) {
-        withAnimation(.easeIn(duration: 0.15)) {
+        withAnimation(.easeOut(duration: 0.25)) {
             pageOffset = -direction * pageWidth
         } completion: {
             var t = Transaction()
             t.disablesAnimations = true
-            withTransaction(t) { pageOffset = direction * pageWidth }
-            Task { await vm.selectTab(tab) }
-            withAnimation(.easeOut(duration: 0.2)) { pageOffset = 0 }
+            withTransaction(t) {
+                vm.selectedTab = tab
+                pageOffset = 0
+            }
         }
+    }
+
+    private var pagedTabContent: some View {
+        let tabs = [vm.adjacentTab(-1), vm.selectedTab, vm.adjacentTab(1)]
+        return HStack(alignment: .top, spacing: 0) {
+            ForEach(Array(tabs.enumerated()), id: \.offset) { index, tab in
+                if let tab {
+                    let isCurrent = index == 1
+                    LazyVStack(spacing: 0) { tabContent(tab, isCurrent: isCurrent) }
+                        .frame(width: pageWidth)
+                        .frame(height: isCurrent ? nil : currentPageHeight, alignment: .top)
+                        .clipped()
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { height in
+                            if isCurrent { currentPageHeight = height }
+                        }
+                        .id(tab)
+                } else {
+                    Color.clear.frame(width: pageWidth, height: 1)
+                }
+            }
+        }
+        // 3 枚の真ん中を画面に合わせる
+        .frame(width: pageWidth)
+        .offset(x: pageOffset)
     }
 
     // MARK: - タブ切り替え
@@ -265,21 +299,22 @@ struct ChannelView: View {
     // MARK: - タブコンテンツ
 
     @ViewBuilder
-    private var tabContent: some View {
-        if vm.isLoadingTab {
+    private func tabContent(_ tab: ChannelTab, isCurrent: Bool) -> some View {
+        let videos = vm.tabVideos[tab] ?? []
+        if vm.loadingTabs.contains(tab) || (tab != .playlists && vm.tabVideos[tab] == nil) {
             ProgressView()
                 .frame(maxWidth: .infinity)
                 .padding(.top, 40)
-        } else if vm.selectedTab == .playlists {
+        } else if tab == .playlists {
             playlistsContent
-        } else if vm.currentVideos.isEmpty {
+        } else if videos.isEmpty {
             ContentUnavailableView(
                 "コンテンツがありません",
                 systemImage: "play.slash"
             )
             .padding(.top, 40)
         } else {
-            ForEach(vm.currentVideos) { video in
+            ForEach(videos) { video in
                 if let playlistId = video.playlistId {
                     // プレイリストはプレイリスト詳細へ
                     NavigationLink {
@@ -314,7 +349,7 @@ struct ChannelView: View {
             }
 
             // ページネーション
-            if vm.hasMore || vm.isLoadingMore {
+            if isCurrent, vm.hasMore || vm.isLoadingMore {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
