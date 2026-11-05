@@ -109,15 +109,18 @@ final class HomeViewModel {
     }
 
     private func loadQuickPlaylists(generation: Int, modelContext: ModelContext) async {
+        var items = [YTPlaylist(playlistId: PinnedPlaylist.downloadsId, title: "ダウンロード")]
+        defer {
+            if generation == loadGeneration {
+                allPlaylists = items
+                refilterPlaylists(modelContext: modelContext)
+            }
+        }
         guard AuthState.shared.isSignedIn else { return }
         guard let library = try? await accountClient.fetchLibrary() else { return }
-        guard generation == loadGeneration else { return }
-        var items: [YTPlaylist] = []
         if let wl = library.watchLater { items.append(wl) }
         if let likes = library.likes { items.append(likes) }
         items.append(contentsOf: library.playlists)
-        allPlaylists = items
-        refilterPlaylists(modelContext: modelContext)
     }
 }
 
@@ -212,7 +215,11 @@ struct HomeView: View {
                 HStack(alignment: .top, spacing: 16) {
                     ForEach(vm.quickPlaylists, id: \.playlistId) { playlist in
                         NavigationLink {
-                            PlaylistDetailView(playlist: playlist)
+                            if playlist.playlistId == PinnedPlaylist.downloadsId {
+                                DownloadsView()
+                            } else {
+                                PlaylistDetailView(playlist: playlist)
+                            }
                         } label: {
                             PlaylistCircleItem(playlist: playlist)
                         }
@@ -290,6 +297,7 @@ private struct PlaylistCircleItem: View {
         switch playlist.playlistId {
         case "VLWL": return "bookmark.fill"
         case "VLLL": return "hand.thumbsup.fill"
+        case PinnedPlaylist.downloadsId: return "arrow.down.circle.fill"
         default:     return nil
         }
     }

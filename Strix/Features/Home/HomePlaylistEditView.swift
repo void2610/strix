@@ -70,6 +70,10 @@ struct HomePlaylistEditView: View {
             Image(systemName: "hand.thumbsup.fill")
                 .frame(width: 24)
                 .foregroundStyle(.blue)
+        case PinnedPlaylist.downloadsId:
+            Image(systemName: "arrow.down.circle.fill")
+                .frame(width: 24)
+                .foregroundStyle(.green)
         default:
             Image(systemName: "music.note.list")
                 .frame(width: 24)

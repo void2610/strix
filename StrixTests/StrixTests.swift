@@ -1235,6 +1235,17 @@ struct HomeViewModelTests {
         #expect(!vm.isLoading)
     }
 
+    @Test func loadOffersDownloadsEvenWhenSignedOut() async throws {
+        try #require(!AuthState.shared.isSignedIn)
+        let ctx = try makeInMemoryContext()
+        UserDefaults.standard.set(false, forKey: "hasCustomizedHomePlaylists")
+        defer { UserDefaults.standard.removeObject(forKey: "hasCustomizedHomePlaylists") }
+        let vm = HomeViewModel(client: .mock())
+        await vm.load(modelContext: ctx)
+        #expect(vm.allPlaylists.map(\.playlistId) == [PinnedPlaylist.downloadsId])
+        #expect(vm.quickPlaylists.map(\.playlistId) == [PinnedPlaylist.downloadsId])
+    }
+
     @Test func refilterShowsAllWhenNotCustomized() async throws {
         let ctx = try makeInMemoryContext()
         UserDefaults.standard.set(false, forKey: "hasCustomizedHomePlaylists")

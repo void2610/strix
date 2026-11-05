@@ -15,6 +15,9 @@ final class PinnedPlaylist {
     @Attribute(.unique) var playlistId: String
     var sortOrder: Int
 
+    /// ダウンロード済み動画の一覧を表す ID（YouTube のプレイリスト ID と重ならない値）
+    static let downloadsId = "STRIX_DOWNLOADS"
+
     init(playlistId: String, sortOrder: Int = 0) {
         self.playlistId = playlistId
         self.sortOrder = sortOrder
