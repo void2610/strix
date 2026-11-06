@@ -57,6 +57,15 @@ VISIONOS と IOS の `/player` は `storyboards.playerStoryboardSpecRenderer.spe
 - 画像は列×行の格子にコマを並べたもの。コマ番号 = 時刻 ÷ 間隔、画像番号 = コマ番号 ÷（列×行）で、URL の `$L` をレベル、`$N` の `$M` を画像番号に置き換え、`&sigh=署名` を付ける
 - 取得した画像は `StoryboardSheetCache` に持ち、同じ画像への同時要求は 1 回の通信にまとめる
 
+### チャンネルの登録状態
+
+チャンネルの `/browse` の応答から登録済みかを読む（`ContentClient.extractSubscribedState`）。
+
+- **ボタンの値は状態ではない**: `pageHeaderViewModel` の `subscribeButtonViewModel` は、押したときの切り替え先として `subscribeButtonContent.subscribeState.subscribed = false` と `unsubscribeButtonContent.subscribeState.subscribed = true` を両方持つ。header の中で最初に見つかった `subscribed` を使うと、辞書を回る順番しだいで登録済みのチャンネルも未登録に見える（2026-11 に実際に起きた）
+- **実際の状態は frameworkUpdates にある**: `frameworkUpdates.entityBatchUpdate.mutations[]` のうち、`entityKey` がボタンの `stateEntityStoreKey` と同じもの（URL エンコードを戻して比べる）の `payload.subscriptionStateEntity.subscribed`
+- **未ログインの応答には登録ボタン自体が無い**: 確かめるにはログイン中の応答が要る
+- 旧 `c4TabbedHeaderRenderer` は `subscribeButtonRenderer.subscribed` に直接持つ
+
 ### 視聴履歴のアカウント記録（PlaybackTracker）
 
 再生とは別に、`/player` の `playbackTracking` にある URL へ送信して、YouTube アカウントの再生履歴に記録する。
