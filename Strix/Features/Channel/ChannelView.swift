@@ -155,6 +155,8 @@ struct ChannelView: View {
     @State private var currentPageHeight: CGFloat = 0
     /// タブ列の中での各タブの位置（下線の位置合わせに使う）
     @State private var tabFrames: [ChannelTab: CGRect] = [:]
+    /// 離れたタブをタップしたとき、送る間だけ隣に並べるタブ
+    @State private var slideTarget: (tab: ChannelTab, direction: Int)?
     @Environment(PlayerCoordinator.self) private var playerCoordinator
 
     var body: some View {
@@ -231,32 +233,45 @@ struct ChannelView: View {
 
     /// 並べてある隣のタブまで送り、送り終えたら選択を移して位置を戻す（見た目は変わらない）
     private func switchPage(to tab: ChannelTab, direction: CGFloat) {
-        withAnimation(.easeOut(duration: 0.25)) {
+        let duration = 0.25
+        withAnimation(.easeOut(duration: duration)) {
             pageOffset = -direction * pageWidth
-        } completion: {
+        }
+        // 離れたタブを隣に置いてから送ると withAnimation の completion が呼ばれないため、時間で区切る
+        Task {
+            try? await Task.sleep(for: .seconds(duration))
             var t = Transaction()
             t.disablesAnimations = true
             withTransaction(t) {
                 vm.selectedTab = tab
+                slideTarget = nil
                 pageOffset = 0
             }
         }
     }
 
     private var pagedTabContent: some View {
-        let tabs = [vm.adjacentTab(-1), vm.selectedTab, vm.adjacentTab(1)]
+        let tabs = [neighborTab(-1), vm.selectedTab, neighborTab(1)]
         return HStack(alignment: .top, spacing: 0) {
             ForEach(Array(tabs.enumerated()), id: \.offset) { index, tab in
                 if let tab {
                     let isCurrent = index == 1
-                    LazyVStack(spacing: 0) { tabContent(tab, isCurrent: isCurrent) }
-                        .frame(width: pageWidth)
-                        .frame(height: isCurrent ? nil : currentPageHeight, alignment: .top)
-                        .clipped()
-                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { height in
-                            if isCurrent { currentPageHeight = height }
+                    // 枠は残して中身だけ作り直し、離れたタブを隣に置いても枠の位置はアニメーションに乗せる
+                    Group {
+                        if isCurrent {
+                            LazyVStack(spacing: 0) { tabContent(tab, isCurrent: true) }
+                        } else {
+                            // 画面外だと Lazy は行を作らず、送る途中に作った行が伸び縮みするため、先に全部作っておく
+                            VStack(spacing: 0) { tabContent(tab, isCurrent: false) }
                         }
-                        .id(tab)
+                    }
+                    .id(tab)
+                    .frame(width: pageWidth)
+                    .frame(height: isCurrent ? nil : currentPageHeight, alignment: .top)
+                    .clipped()
+                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { height in
+                        if isCurrent { currentPageHeight = height }
+                    }
                 } else {
                     Color.clear.frame(width: pageWidth, height: 1)
                 }
@@ -306,17 +321,29 @@ struct ChannelView: View {
 
     private let tabBarSpace = "channelTabBar"
 
-    /// 隣のタブは払ったときと同じく横に送り、離れたタブは下線だけ動かして中身を切り替える
+    /// 払ったときと同じく横に送る。離れたタブは送る間だけ隣に並べる
     private func tapTab(_ tab: ChannelTab) {
-        guard tab != vm.selectedTab else { return }
+        // 送っている途中のタップは、選択が移り終わるまで受けない
+        guard tab != vm.selectedTab, slideTarget == nil, pageOffset == 0 else { return }
         Task { await vm.loadTab(tab) }
-        if tab == vm.adjacentTab(1) {
-            switchPage(to: tab, direction: 1)
-        } else if tab == vm.adjacentTab(-1) {
-            switchPage(to: tab, direction: -1)
-        } else {
-            withAnimation(.easeOut(duration: 0.25)) { vm.selectedTab = tab }
+        let tabs = ChannelTab.allCases
+        guard let from = tabs.firstIndex(of: vm.selectedTab), let to = tabs.firstIndex(of: tab) else { return }
+        let direction = to > from ? 1 : -1
+        guard tab != vm.adjacentTab(direction) else {
+            switchPage(to: tab, direction: CGFloat(direction))
+            return
         }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { slideTarget = (tab, direction) }
+        // 隣に置いたページが描かれてから送る（同じ更新で送ると中身が伸び縮みする）
+        DispatchQueue.main.async { switchPage(to: tab, direction: CGFloat(direction)) }
+    }
+
+    /// 中身の隣に並べるタブ。離れたタブへ送る間はそのタブを隣に置く
+    private func neighborTab(_ direction: Int) -> ChannelTab? {
+        if let slideTarget, slideTarget.direction == direction { return slideTarget.tab }
+        return vm.adjacentTab(direction)
     }
 
     /// 引いている量の割合（左へ引くと正）
@@ -327,7 +354,7 @@ struct ChannelView: View {
 
     /// 下線が半分以上かかっているタブを、文字の強調にも使う
     private var highlightedTab: ChannelTab {
-        guard abs(pageProgress) >= 0.5, let next = vm.adjacentTab(pageProgress > 0 ? 1 : -1) else { return vm.selectedTab }
+        guard abs(pageProgress) >= 0.5, let next = neighborTab(pageProgress > 0 ? 1 : -1) else { return vm.selectedTab }
         return next
     }
 
@@ -335,7 +362,7 @@ struct ChannelView: View {
     @ViewBuilder
     private var tabIndicator: some View {
         if let from = tabFrames[vm.selectedTab] {
-            let to = vm.adjacentTab(pageProgress > 0 ? 1 : -1).flatMap { tabFrames[$0] } ?? from
+            let to = neighborTab(pageProgress > 0 ? 1 : -1).flatMap { tabFrames[$0] } ?? from
             let t = min(abs(pageProgress), 1)
             let x = from.minX + (to.minX - from.minX) * t
             let width = from.width + (to.width - from.width) * t
