@@ -172,6 +172,8 @@ struct ChannelView: View {
                 channelContent(info: info)
             }
         }
+        // 公式アプリと同じく、ヘッダーが流れたあともどのチャンネルかをナビゲーションバーで示す
+        .navigationTitle(vm.channelInfo?.name ?? "")
         .navigationBarTitleDisplayMode(.inline)
         // 上端に残したタブ列の上へ中身が透けないようにする
         .toolbarBackground(Color(.systemBackground), for: .navigationBar)
@@ -279,7 +281,7 @@ struct ChannelView: View {
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(tab == highlightedTab ? Color.primary : Color.secondary)
-                                .padding(.horizontal, 14)
+                                .padding(.horizontal, 20)
                                 .padding(.vertical, 12)
                                 .contentShape(Rectangle())
                         }
@@ -297,8 +299,9 @@ struct ChannelView: View {
                 withAnimation { proxy.scrollTo(tab, anchor: .center) }
             }
         }
+        // 下線を区切り線の上に重ねる
+        .background(alignment: .bottom) { Divider() }
         .background(Color(.systemBackground))
-        .overlay(alignment: .bottom) { Divider() }
     }
 
     private let tabBarSpace = "channelTabBar"
@@ -334,12 +337,12 @@ struct ChannelView: View {
         if let from = tabFrames[vm.selectedTab] {
             let to = vm.adjacentTab(pageProgress > 0 ? 1 : -1).flatMap { tabFrames[$0] } ?? from
             let t = min(abs(pageProgress), 1)
-            let inset: CGFloat = 10
-            let x = from.minX + (to.minX - from.minX) * t + inset
-            let width = from.width + (to.width - from.width) * t - inset * 2
-            Capsule()
+            let x = from.minX + (to.minX - from.minX) * t
+            let width = from.width + (to.width - from.width) * t
+            // 公式アプリと同じく、角のない線をタブの幅いっぱいに引く
+            Rectangle()
                 .fill(Color.primary)
-                .frame(width: max(0, width), height: 3)
+                .frame(width: max(0, width), height: 2)
                 .offset(x: x)
         }
     }
