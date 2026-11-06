@@ -44,9 +44,7 @@ extension ContentClient {
         let bannerSources = bannerThumbs ?? pageBannerSources
         let bannerURL = ContentClient.imageURL(from: bannerSources?.last?["url"] as? String)
 
-        // c4TabbedHeaderRenderer は subscribeButtonRenderer、pageHeaderRenderer は subscribeButtonViewModel に
-        // 登録状態を持つため、header 配下を再帰探索して両レイアウトに対応する
-        let subscribed = extractSubscribedState(from: header) ?? false
+        let subscribed = extractSubscribedState(from: json) ?? false
 
         return ChannelInfo(
             channelId: channelId,
@@ -60,28 +58,39 @@ extension ContentClient {
         )
     }
 
-    /// header 配下から登録状態を再帰探索する。
-    /// 旧 c4TabbedHeaderRenderer は `subscribeButtonRenderer`、新 pageHeaderRenderer は
-    /// `subscribeButtonViewModel` に登録状態を持つ。これらのサブツリーに入って初めて
-    /// `subscribed` を採用することで、subscribe ボタンと無関係な `subscribed` の誤検出を防ぐ。
-    static func extractSubscribedState(from any: Any?, insideSubscribeButton: Bool = false) -> Bool? {
-        if let dict = any as? [String: Any] {
-            if insideSubscribeButton, let subscribed = dict["subscribed"] as? Bool {
+    /// /browse の応答からチャンネルの登録状態を取り出す。
+    /// pageHeaderRenderer の subscribeButtonViewModel は、押したときの切り替え先（登録側 false・解除側 true）を
+    /// 両方持つだけで、実際の状態は frameworkUpdates の subscriptionStateEntity にある。
+    /// ボタンの stateEntityStoreKey と同じキーのものを引く。旧 c4TabbedHeaderRenderer は subscribeButtonRenderer に直接持つ。
+    static func extractSubscribedState(from response: [String: Any]) -> Bool? {
+        let header = response["header"]
+        if let key = findValue(forKey: "subscribeButtonViewModel", in: header)
+            .flatMap({ ($0 as? [String: Any])?["stateEntityStoreKey"] as? String }) {
+            let mutations = ((response["frameworkUpdates"] as? [String: Any])?["entityBatchUpdate"] as? [String: Any])?["mutations"] as? [[String: Any]]
+            // entityKey は URL エンコードされて届くことがあるため、戻してから比べる
+            let normalized = key.removingPercentEncoding ?? key
+            for mutation in mutations ?? [] {
+                guard let entityKey = mutation["entityKey"] as? String,
+                      (entityKey.removingPercentEncoding ?? entityKey) == normalized,
+                      let entity = (mutation["payload"] as? [String: Any])?["subscriptionStateEntity"] as? [String: Any],
+                      let subscribed = entity["subscribed"] as? Bool else { continue }
                 return subscribed
             }
-            for (key, value) in dict {
-                let nowInside = insideSubscribeButton
-                    || key == "subscribeButtonRenderer"
-                    || key == "subscribeButtonViewModel"
-                if let found = extractSubscribedState(from: value, insideSubscribeButton: nowInside) {
-                    return found
-                }
+            return nil
+        }
+        return (findValue(forKey: "subscribeButtonRenderer", in: header) as? [String: Any])?["subscribed"] as? Bool
+    }
+
+    /// 入れ子の辞書・配列から、指定したキーの値を最初に見つけたものを返す
+    static func findValue(forKey target: String, in any: Any?) -> Any? {
+        if let dict = any as? [String: Any] {
+            if let value = dict[target] { return value }
+            for value in dict.values {
+                if let found = findValue(forKey: target, in: value) { return found }
             }
         } else if let array = any as? [Any] {
             for value in array {
-                if let found = extractSubscribedState(from: value, insideSubscribeButton: insideSubscribeButton) {
-                    return found
-                }
+                if let found = findValue(forKey: target, in: value) { return found }
             }
         }
         return nil

@@ -716,38 +716,50 @@ struct ChannelViewModelTests {
 struct ChannelSubscribedStateTests {
 
     @Test func c4LayoutSubscribed() {
-        let header: [String: Any] = ["c4TabbedHeaderRenderer": ["subscribeButton": ["subscribeButtonRenderer": ["subscribed": true]]]]
-        #expect(ContentClient.extractSubscribedState(from: header) == true)
+        let response: [String: Any] = ["header": ["c4TabbedHeaderRenderer": ["subscribeButton": ["subscribeButtonRenderer": ["subscribed": true]]]]]
+        #expect(ContentClient.extractSubscribedState(from: response) == true)
     }
 
-    @Test func pageHeaderLayoutSubscribed() {
-        // 再帰探索のため actions の配列ネストを通して subscribeButtonViewModel を検出できる
-        let header: [String: Any] = ["pageHeaderRenderer": ["content": ["actions": [["subscribeButtonViewModel": ["subscribed": true]]]]]]
-        #expect(ContentClient.extractSubscribedState(from: header) == true)
+    /// ログイン中の実際の応答と同じ形。ボタンは登録側 false・解除側 true の両方を持ち、実際の状態は frameworkUpdates にある
+    private func pageHeaderResponse(subscribed: Bool, entityKey: String = "EhhVQ1JkWGFrdkRYUXJndlpsVnJzUUJaWHcgMygB") -> [String: Any] {
+        let button: [String: Any] = [
+            "stateEntityStoreKey": "EhhVQ1JkWGFrdkRYUXJndlpsVnJzUUJaWHcgMygB",
+            "subscribeButtonContent": ["subscribeState": ["key": "k", "subscribed": false]],
+            "unsubscribeButtonContent": ["subscribeState": ["key": "k", "subscribed": true]]
+        ]
+        return [
+            "header": ["pageHeaderRenderer": ["content": ["pageHeaderViewModel": ["actions": ["flexibleActionsViewModel": [
+                "actionsRows": [["actions": [["subscribeButtonViewModel": button]]]]
+            ]]]]]],
+            "frameworkUpdates": ["entityBatchUpdate": ["mutations": [
+                ["entityKey": "EhhVQ1JkWGFrdkRYUXJndlpsVnJzUUJaWHcgjAEoAQ%3D%3D", "payload": ["subscriptionNotificationStateEntity": ["state": 1]]],
+                ["entityKey": entityKey, "payload": ["subscriptionStateEntity": ["key": "k", "subscribed": subscribed]]]
+            ]]]
+        ]
     }
 
-    @Test func pageHeaderLayoutNotSubscribed() {
-        let header: [String: Any] = ["pageHeaderRenderer": ["content": ["actions": [["subscribeButtonViewModel": ["subscribed": false]]]]]]
-        #expect(ContentClient.extractSubscribedState(from: header) == false)
+    @Test func pageHeaderReadsSubscribedFromStateEntity() {
+        #expect(ContentClient.extractSubscribedState(from: pageHeaderResponse(subscribed: true)) == true)
+    }
+
+    @Test func pageHeaderReadsNotSubscribedFromStateEntity() {
+        #expect(ContentClient.extractSubscribedState(from: pageHeaderResponse(subscribed: false)) == false)
+    }
+
+    @Test func pageHeaderMatchesPercentEncodedEntityKey() {
+        let response = pageHeaderResponse(subscribed: true, entityKey: "EhhVQ1JkWGFrdkRYUXJndlpsVnJzUUJaWHcgMygB".replacingOccurrences(of: "B", with: "%42"))
+        #expect(ContentClient.extractSubscribedState(from: response) == true)
+    }
+
+    @Test func pageHeaderWithoutStateEntityReturnsNil() {
+        var response = pageHeaderResponse(subscribed: true)
+        response["frameworkUpdates"] = nil
+        #expect(ContentClient.extractSubscribedState(from: response) == nil)
     }
 
     @Test func absentReturnsNil() {
-        let header: [String: Any] = ["pageHeaderRenderer": ["content": ["title": "X"]]]
-        #expect(ContentClient.extractSubscribedState(from: header) == nil)
-    }
-
-    /// subscribe ボタンと無関係な subscribed フラグを誤検出しないことを保証する回帰テスト
-    @Test func ignoresSubscribedOutsideSubscribeButton() {
-        let header: [String: Any] = [
-            "pageHeaderRenderer": [
-                "content": [
-                    "someOtherComponent": ["subscribed": true],
-                    "metadata": ["subscribed": true]
-                ]
-            ],
-            "subscribed": true
-        ]
-        #expect(ContentClient.extractSubscribedState(from: header) == nil)
+        let response: [String: Any] = ["header": ["pageHeaderRenderer": ["content": ["title": "X"]]]]
+        #expect(ContentClient.extractSubscribedState(from: response) == nil)
     }
 }
 
