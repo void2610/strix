@@ -72,6 +72,7 @@ xcodebuild test -project Strix.xcodeproj -scheme Strix \
 - **ドラッグで揺れる・暴れる類の不具合は、直す前に記録で操作を確定する**。どの操作の話かを推測で決めない
   - 実機: Documents にファイルを追記する一時記録を入れたビルドでユーザーに 1 回操作してもらい、`devicectl device copy from` で取り出す
   - シミュレータ: `StrixUITests` の一時テストで `press(forDuration:thenDragTo:withVelocity:)` を使うと速さを指定してドラッグできる。`-parallel-testing-enabled NO` で起動中のシミュレータを使い、`simctl io recordVideo` で録画してコマごとに位置を測る（ffmpeg で縦の列を切り出すときは幅 2 以上。幅 1 だと rgb24 変換で失敗する）
+- **動画が再生される UI テスト・録画は、回す前にユーザーに聞く**。ユーザーは同じ Mac で作業しており、シミュレータの音が邪魔になる。音を消すために Mac の音量やミュートを操作しない
 - 新しい ViewModel・ロジック・ユーティリティには対応テストを同時実装
 - **テスト分類**:
   - ユニットテスト: `ContentClient.mock()` 等でネットワーク不要
