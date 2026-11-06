@@ -3521,3 +3521,13 @@ struct PlayerLikeTests {
         #expect(vm.likeState?.rating == VideoRating.none)
     }
 }
+
+struct FrameTickerTests {
+    @Test func easedProgressStartsAtZeroEndsAtOneAndDecelerates() {
+        #expect(FrameTicker.easedProgress(elapsed: 0, duration: 0.25) == 0)
+        #expect(FrameTicker.easedProgress(elapsed: 0.25, duration: 0.25) == 1)
+        #expect(FrameTicker.easedProgress(elapsed: 1, duration: 0.25) == 1)
+        // 前半で半分以上進む（終わりに向けて減速する）
+        #expect(FrameTicker.easedProgress(elapsed: 0.125, duration: 0.25) > 0.5)
+    }
+}
