@@ -1,47 +1,61 @@
 {
-  "fill" : {
-    "linear-gradient" : [
-      "srgb:0.16863,0.18431,0.41961,1.00000",
-      "srgb:0.07843,0.08627,0.22745,1.00000"
+  "fill": {
+    "linear-gradient": [
+      "srgb:1.00000,0.20000,0.25098,1.00000",
+      "srgb:0.78431,0.03529,0.12157,1.00000"
     ],
-    "orientation" : {
-      "start" : { "x" : 0.5, "y" : 0 },
-      "stop" : { "x" : 0.5, "y" : 1 }
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 1
+      }
     }
   },
-  "groups" : [
+  "groups": [
     {
-      "name" : "Play",
-      "layers" : [
-        { "image-name" : "play.svg", "name" : "play", "glass" : true,
-          "fill-specializations" : [ { "appearance" : "tinted", "value" : { "solid" : "srgb:1.00000,1.00000,1.00000,1.00000" } } ] }
+      "name": "b",
+      "layers": [
+        {
+          "image-name": "b.svg",
+          "name": "b",
+          "glass": true
+        }
       ],
-      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
-      "translucency" : { "enabled" : true, "value" : 0.3 },
-      "specular" : true
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.35
+      },
+      "specular": true
     },
     {
-      "name" : "Eyes",
-      "layers" : [
-        { "image-name" : "eyes.svg", "name" : "eyes", "glass" : true }
+      "name": "a",
+      "layers": [
+        {
+          "image-name": "a.svg",
+          "name": "a",
+          "glass": true
+        }
       ],
-      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
-      "translucency" : { "enabled" : true, "value" : 0.2 },
-      "specular" : true
-    },
-    {
-      "name" : "Face",
-      "layers" : [
-        { "image-name" : "beak.svg", "name" : "beak", "glass" : true },
-        { "image-name" : "face.svg", "name" : "face", "glass" : true },
-        { "image-name" : "head.svg", "name" : "head", "glass" : true }
-      ],
-      "shadow" : { "kind" : "layer-color", "opacity" : 0.5 },
-      "translucency" : { "enabled" : true, "value" : 0.4 },
-      "specular" : true
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.0
+      },
+      "specular": true
     }
   ],
-  "supported-platforms" : {
-    "squares" : "shared"
+  "supported-platforms": {
+    "squares": "shared"
   }
 }
