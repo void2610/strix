@@ -1,8 +1,8 @@
 {
   "fill": {
     "linear-gradient": [
-      "srgb:1.00000,0.20000,0.25098,1.00000",
-      "srgb:0.78431,0.03529,0.12157,1.00000"
+      "srgb:0.10196,0.05882,0.20000,1.00000",
+      "srgb:0.03922,0.02353,0.09412,1.00000"
     ],
     "orientation": {
       "start": {
@@ -22,7 +22,15 @@
         {
           "image-name": "b.svg",
           "name": "b",
-          "glass": true
+          "glass": true,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ]
         }
       ],
       "shadow": {
@@ -41,7 +49,15 @@
         {
           "image-name": "a.svg",
           "name": "a",
-          "glass": true
+          "glass": true,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ]
         }
       ],
       "shadow": {
